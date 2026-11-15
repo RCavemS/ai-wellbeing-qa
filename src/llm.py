@@ -1,8 +1,6 @@
 """LLM client abstractions and provider implementations."""
 
 import abc
-import os
-import re
 from typing import Optional
 from src.config import Config
 
@@ -24,43 +22,22 @@ class MockLLMClient(BaseLLMClient):
         self.temperature = temperature
 
     def generate(self, prompt: str, system_prompt: Optional[str] = None) -> str:
-        """Return empathetic synthetic response matching input language and context."""
+        """Return empathetic synthetic response for check-in."""
         lower = prompt.lower()
 
-        # Detect language preference: English vs Portuguese
-        pt_indicators = bool(
-            re.search(r"\b(estou|sinto|olá|ola|como|dia|trabalho|cansado|ansioso|triste|qual|estás|neste)\b|[áàâãéêíóôõúç]", lower)
-        )
-        en_indicators = bool(
-            re.search(r"\b(what|how|why|is|the|i|i'm|feel|feeling|tired|stressed|work|hello|sad|happy|today)\b", lower)
-        )
-        is_english = en_indicators and not pt_indicators
-
-        # Off-topic detection for synthetic response
+        # Off-topic redirect (FR1.3)
         if any(w in lower for w in ["capital of", "weather in", "write code", "calculate", "qual é a capital", "programar"]):
-            if is_english:
-                return (
-                    "I am here specifically to support your wellbeing check-in. "
-                    "How are you feeling right now in yourself?"
-                )
             return (
                 "Estou aqui especificamente para acompanhar o teu check-in de bem-estar. "
                 "Como te estás a sentir neste momento?"
             )
 
-        # Empathetic check-in responses
-        if is_english:
-            return (
-                "Thank you for sharing that with me. It sounds like you are carrying a lot today, "
-                "and it is completely natural to feel that way. Take a gentle breath. "
-                "What is one small thing that might bring you a moment of comfort right now?"
-            )
-        else:
-            return (
-                "Obrigado por partilhares isso comigo. Compreendo perfeitamente que estejas a sentir esse peso, "
-                "e é totalmente legítimo sentires-te assim. Faz uma pausa e respira fundo. "
-                "Há alguma pequena coisa que te possa trazer algum alívio hoje?"
-            )
+        # Standard empathetic check-in response (FR1.2, FR2)
+        return (
+            "Obrigado por partilhares isso comigo. Compreendo perfeitamente que estejas a sentir esse peso, "
+            "e é totalmente legítimo sentires-te assim. Faz uma pausa e respira fundo. "
+            "Há alguma pequena coisa que te possa trazer algum alívio hoje?"
+        )
 
 
 class GeminiLLMClient(BaseLLMClient):
