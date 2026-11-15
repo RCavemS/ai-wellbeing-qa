@@ -4,7 +4,7 @@ Instructions for any AI agent working in this repo.
 
 ## Project
 - What it is: Quality and safety evaluation portfolio project for an AI-powered wellbeing check-in assistant with a rule-based safety layer and simple API.
-- Stack: Python, pytest (API framework e.g. FastAPI)
+- Stack: Python, FastAPI, pytest
 - Run tests: `pytest`
 - Run locally: `python -m src.api`
 
