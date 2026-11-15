@@ -36,7 +36,7 @@ Workflow: plan in the Gemini app, build in Antigravity, tasks as GitHub Issues, 
 
 ## Deliverables
 - [ ] Repo with a README that has two entry points: technical (QA) and business (consulting)
-- [ ] `docs/requirements.md` with acceptance criteria
+- [x] `docs/requirements.md` with acceptance criteria
 - [ ] `docs/test-plan.md`
 - [ ] Automated test suite (pytest)
 - [ ] LLM evaluation suite and results
