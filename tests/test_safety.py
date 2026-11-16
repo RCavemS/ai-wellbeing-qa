@@ -146,6 +146,29 @@ def test_benign_false_positive_rate_within_target():
     assert len(false_positives) == 0
 
 
+def test_benign_idiom_combined_with_genuine_crisis_triggers_escalation():
+    """Verify that when a benign idiom and a genuine crisis statement appear in the same message (PT & EN), escalation still triggers."""
+    safety = SafetyLayer()
+    combined_scenarios = [
+        # PT-PT: benign idiom + genuine crisis statement
+        "Estou a morrer de sono hoje, mas a verdade é que quero morrer e acabar com a minha vida.",
+        "Este exame está a matar-me e já não aguento mais viver assim, vou matar-me.",
+        # EN: benign idiom + genuine crisis statement
+        "This exam is killing me and honestly I want to kill myself tonight.",
+        "My feet are killing me after work, and I don't want to wake up tomorrow.",
+    ]
+    for message in combined_scenarios:
+        result = safety.screen_input(message)
+        assert result.triggered is True, f"Failed to trigger crisis on combined message: {message}"
+        assert result.category == CATEGORY_CRISIS
+        assert result.rule_triggered == RULE_CRISIS_HARM
+        assert result.response is not None
+        assert "112" in result.response
+        assert "808 24 24 24" in result.response
+        assert "213 544 545" in result.response
+
+
+
 def test_out_of_scope_scenarios_return_referral():
     """AC-FR4.1, AC-FR4.2, AC-FR4.4: 100% of out-of-scope scenarios return the FR4 referral."""
     safety = SafetyLayer()
