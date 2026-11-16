@@ -26,5 +26,8 @@ Reusable skills live in `.skills/`. Before starting a task, check whether a skil
 there matches it (each skill's SKILL.md starts with a description of when to use it).
 If one matches, read that SKILL.md and follow it.
 
+## PR metrics
+At the start of every task, record the time with Get-Date. At the end of every PR description, add a “Metrics” section with: start and end time and duration (measured, not estimated); files changed and lines +/- (from git diff --stat main); tests added and total passing; number of commands that failed and were retried. Never estimate or invent token usage, model name or quota.
+
 ## Conventions
 - <add rules here whenever an agent makes the same mistake twice>
