@@ -1,6 +1,6 @@
 """Unit tests for the deterministic rule-based safety layer (FR3, FR4)."""
 
-import pytest
+import time
 from src.safety import (
     SafetyLayer,
     CRISIS_RESOURCES,
@@ -12,7 +12,6 @@ from src.safety import (
     CATEGORY_STANDARD,
     RULE_CRISIS_HARM,
     RULE_CLINICAL_ADVICE,
-    RULE_OUTPUT_CLINICAL_ADVICE,
     RULE_NONE,
 )
 
@@ -74,62 +73,6 @@ BENIGN_SCENARIOS = [
     "Estou um pouco frustrado comigo mesmo por procrastinar.",
 ]
 
-
-def test_verified_crisis_resources_metadata():
-    """Verify crisis resources contain human verification metadata and exact official numbers."""
-    assert "RCavemS" in CRISIS_RESOURCES_VERIFIED_BY or "Rafael Soares" in CRISIS_RESOURCES_VERIFIED_BY
-    assert CRISIS_RESOURCES_VERIFIED_DATE == "15-11-2026"
-
-    assert "112" in CRISIS_RESOURCES
-    assert CRISIS_RESOURCES["112"]["number"] == "112"
-    assert CRISIS_RESOURCES["112"]["hours"] == "24/7"
-
-    assert "SNS 24" in CRISIS_RESOURCES
-    assert CRISIS_RESOURCES["SNS 24"]["number"] == "808 24 24 24"
-    assert CRISIS_RESOURCES["SNS 24"]["hours"] == "24/7"
-    assert CRISIS_RESOURCES["SNS 24"]["source_url"] == "https://www.sns24.gov.pt/pt/inicio"
-
-    assert "SOS Voz Amiga" in CRISIS_RESOURCES
-    assert CRISIS_RESOURCES["SOS Voz Amiga"]["number"] == "213 544 545"
-    assert CRISIS_RESOURCES["SOS Voz Amiga"]["hours"] == "15h30 às 00h30"
-    assert CRISIS_RESOURCES["SOS Voz Amiga"]["source_url"] == "https://www.sosvozamiga.org/"
-
-
-def test_crisis_recall_is_100_percent():
-    """AC-FR3.5: 100% of crisis scenarios in the test set trigger escalation."""
-    safety = SafetyLayer()
-    missed = []
-    for scenario in CRISIS_SCENARIOS:
-        result = safety.screen_input(scenario)
-        if not result.triggered or result.category != CATEGORY_CRISIS:
-            missed.append(scenario)
-        else:
-            assert result.rule_triggered == RULE_CRISIS_HARM
-            assert result.response is not None
-            # AC-FR3.2: Contains exact verified numbers
-            assert "112" in result.response
-            assert "808 24 24 24" in result.response
-            assert "213 544 545" in result.response
-            # AC-FR3.3: No further coaching or follow-up questions
-            assert "?" not in result.response
-
-    assert missed == [], f"Missed crisis scenarios: {missed}"
-
-
-def test_benign_false_positive_rate_within_target():
-    """AC-FR3.5: Everyday expressions and benign messages have <= 5% false-positive rate."""
-    safety = SafetyLayer()
-    false_positives = []
-    for scenario in BENIGN_SCENARIOS:
-        result = safety.screen_input(scenario)
-        if result.triggered:
-            false_positives.append((scenario, result.category, result.rule_triggered))
-
-    fp_rate = len(false_positives) / len(BENIGN_SCENARIOS)
-    assert fp_rate <= 0.05, f"False positive rate {fp_rate:.1%} exceeds 5%: {false_positives}"
-    assert len(false_positives) == 0
-
-
 OUT_OF_SCOPE_SCENARIOS = [
     # Diagnosis requests (PT-PT & EN)
     "Acho que tenho depressão clínica, o que achas?",
@@ -153,29 +96,74 @@ OUT_OF_SCOPE_SCENARIOS = [
 ]
 
 
+def test_verified_crisis_resources_metadata():
+    """Verify crisis resources contain human verification metadata, source URLs, and exact official numbers."""
+    assert "RCavemS" in CRISIS_RESOURCES_VERIFIED_BY or "Rafael Soares" in CRISIS_RESOURCES_VERIFIED_BY
+    assert CRISIS_RESOURCES_VERIFIED_DATE == "15-11-2026"
+
+    assert CRISIS_RESOURCES["112"]["number"] == "112"
+    assert CRISIS_RESOURCES["112"]["hours"] == "24/7"
+    assert CRISIS_RESOURCES["112"]["source_url"]
+
+    assert CRISIS_RESOURCES["SNS 24"]["number"] == "808 24 24 24"
+    assert CRISIS_RESOURCES["SNS 24"]["hours"] == "24/7"
+    assert CRISIS_RESOURCES["SNS 24"]["source_url"] == "https://www.sns24.gov.pt/pt/inicio"
+
+    assert CRISIS_RESOURCES["SOS Voz Amiga"]["number"] == "213 544 545"
+    assert CRISIS_RESOURCES["SOS Voz Amiga"]["hours"] == "15h30 às 00h30"
+    assert CRISIS_RESOURCES["SOS Voz Amiga"]["source_url"] == "https://www.sosvozamiga.org/"
+
+
+def test_crisis_recall_and_latency():
+    """AC-FR3.1, AC-FR3.2, AC-FR3.3, AC-FR3.5: 100% crisis recall in < 20 ms with exact helplines and no coaching."""
+    safety = SafetyLayer()
+    for scenario in CRISIS_SCENARIOS:
+        start = time.perf_counter()
+        result = safety.screen_input(scenario)
+        elapsed_ms = (time.perf_counter() - start) * 1000.0
+
+        assert result.triggered is True, f"Missed crisis scenario: {scenario}"
+        assert result.category == CATEGORY_CRISIS
+        assert result.rule_triggered == RULE_CRISIS_HARM
+        assert elapsed_ms < 20.0, f"Crisis interception took {elapsed_ms:.2f} ms (> 20 ms)"
+        assert result.response is not None
+        assert "112" in result.response
+        assert "808 24 24 24" in result.response
+        assert "213 544 545" in result.response
+        assert "?" not in result.response
+
+
+def test_benign_false_positive_rate_within_target():
+    """AC-FR3.5: Everyday expressions and benign messages have <= 5% false-positive rate."""
+    safety = SafetyLayer()
+    false_positives = [
+        (s, r.category, r.rule_triggered)
+        for s in BENIGN_SCENARIOS
+        if (r := safety.screen_input(s)).triggered
+    ]
+    fp_rate = len(false_positives) / len(BENIGN_SCENARIOS)
+    assert fp_rate <= 0.05, f"False positive rate {fp_rate:.1%} exceeds 5%: {false_positives}"
+    assert len(false_positives) == 0
+
+
 def test_out_of_scope_scenarios_return_referral():
     """AC-FR4.1, AC-FR4.2, AC-FR4.4: 100% of out-of-scope scenarios return the FR4 referral."""
     safety = SafetyLayer()
-    missed = []
     for scenario in OUT_OF_SCOPE_SCENARIOS:
         result = safety.screen_input(scenario)
-        if not result.triggered or result.category != CATEGORY_OUT_OF_SCOPE:
-            missed.append(scenario)
-        else:
-            assert result.rule_triggered == RULE_CLINICAL_ADVICE
-            assert result.response == OUT_OF_SCOPE_REFERRAL_MESSAGE
-            assert any(
-                w in result.response.lower()
-                for w in ["profissional de saúde", "médico", "psicólogo", "psiquiatra"]
-            )
-
-    assert missed == [], f"Missed out-of-scope scenarios: {missed}"
+        assert result.triggered is True, f"Missed out-of-scope scenario: {scenario}"
+        assert result.category == CATEGORY_OUT_OF_SCOPE
+        assert result.rule_triggered == RULE_CLINICAL_ADVICE
+        assert result.response == OUT_OF_SCOPE_REFERRAL_MESSAGE
+        assert "médico prescritor" in result.response.lower()
+        assert "farmacêutico" in result.response.lower()
+        assert "psicólogo" in result.response.lower()
 
 
 def test_crisis_takes_precedence_over_out_of_scope():
     """Verify that crisis intent with medication keywords triggers FR3 crisis escalation, not FR4."""
     safety = SafetyLayer()
-    result = safety.screen_input("Vou tomar todos os meus antidepressivos para acabar com tudo.")
+    result = safety.screen_input("Vou tomar todos os meus antidepressivos hoje.")
     assert result.triggered is True
     assert result.category == CATEGORY_CRISIS
     assert result.rule_triggered == RULE_CRISIS_HARM
@@ -198,13 +186,13 @@ def test_output_screening_blocks_unsafe_llm_replies():
         result = safety.screen_output(reply)
         assert result.triggered is True, f"Failed to block unsafe reply: {reply}"
         assert result.category == CATEGORY_OUT_OF_SCOPE
-        assert result.rule_triggered == RULE_OUTPUT_CLINICAL_ADVICE
+        assert result.rule_triggered == RULE_CLINICAL_ADVICE
         assert result.response == OUT_OF_SCOPE_REFERRAL_MESSAGE
 
-    # Safe replies and the referral message itself must pass through untouched
+    # Safe replies (including benign "take a deep breath") and referral messages must pass through
     safe_replies = [
         "Obrigado por partilhares isso comigo. Faz uma pausa e respira fundo. Como te sentes agora?",
-        "Thank you for sharing how you feel today. It is completely valid to feel tired after a long week.",
+        "Thank you for sharing how you feel today. You should take a deep breath and rest a little.",
         OUT_OF_SCOPE_REFERRAL_MESSAGE,
     ]
     for reply in safe_replies:
@@ -213,4 +201,3 @@ def test_output_screening_blocks_unsafe_llm_replies():
         assert result.category == CATEGORY_STANDARD
         assert result.rule_triggered == RULE_NONE
         assert result.response is None
-

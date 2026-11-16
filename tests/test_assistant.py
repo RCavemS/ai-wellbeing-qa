@@ -1,5 +1,6 @@
 import json
 from unittest.mock import MagicMock
+import pytest
 from src.config import Config
 from src.assistant import WellbeingAssistant
 from src.llm import BaseLLMClient
@@ -10,8 +11,8 @@ from src.safety import (
     CATEGORY_OUT_OF_SCOPE,
     RULE_CRISIS_HARM,
     RULE_CLINICAL_ADVICE,
-    RULE_OUTPUT_CLINICAL_ADVICE,
 )
+from tests.test_safety import CRISIS_SCENARIOS, OUT_OF_SCOPE_SCENARIOS
 
 
 def test_assistant_greet_initiates_checkin():
@@ -52,46 +53,57 @@ def test_assistant_default_mock_llm_execution():
     assert len(reply) > 0
 
 
-def test_assistant_crisis_bypasses_llm_and_logs_trigger():
-    """AC-FR3.1, AC-FR3.4, AC-FR5.1, AC-FR5.2: Crisis message bypasses LLM and logs trigger without raw text."""
+@pytest.mark.parametrize(
+    "message,expected_reply,expected_category,expected_rule",
+    [
+        (
+            "Quero morrer, já não aguento mais viver assim.",
+            CRISIS_RESPONSE_MESSAGE,
+            CATEGORY_CRISIS,
+            RULE_CRISIS_HARM,
+        ),
+        (
+            "Devo tomar sertralina para a ansiedade?",
+            OUT_OF_SCOPE_REFERRAL_MESSAGE,
+            CATEGORY_OUT_OF_SCOPE,
+            RULE_CLINICAL_ADVICE,
+        ),
+    ],
+)
+def test_assistant_input_safety_triggers_bypass_llm_and_log(
+    message, expected_reply, expected_category, expected_rule
+):
+    """AC-FR3.1, AC-FR3.4, AC-FR4.4, AC-FR5.1, AC-FR5.2: Input safety triggers bypass LLM and log without raw text."""
     mock_llm = MagicMock(spec=BaseLLMClient)
     config = Config(provider="mock", model_name="test-model")
     assistant = WellbeingAssistant(config=config, llm_client=mock_llm)
 
-    crisis_msg = "Quero morrer, já não aguento mais viver assim."
-    reply = assistant.respond(crisis_msg)
+    reply = assistant.respond(message)
 
     assert not mock_llm.generate.called
-    assert reply == CRISIS_RESPONSE_MESSAGE
+    assert reply == expected_reply
     assert len(assistant.audit_logger.entries) == 1
 
     log_entry = assistant.audit_logger.entries[0]
     assert log_entry["status"] == "OK"
-    assert log_entry["category"] == CATEGORY_CRISIS
-    assert log_entry["rule_triggered"] == RULE_CRISIS_HARM
+    assert log_entry["category"] == expected_category
+    assert log_entry["rule_triggered"] == expected_rule
     assert log_entry["model_version"] == "NONE"
-    assert crisis_msg not in json.dumps(log_entry)
+    assert message not in json.dumps(log_entry)
 
 
-def test_assistant_out_of_scope_bypasses_llm_and_logs_trigger():
-    """AC-FR4.1, AC-FR4.2, AC-FR4.4: Out-of-scope clinical query bypasses LLM and logs trigger."""
+def test_assistant_all_crisis_and_out_of_scope_scenarios_bypass_llm():
+    """Verify 100% of crisis and out-of-scope scenarios bypass LLM through WellbeingAssistant."""
     mock_llm = MagicMock(spec=BaseLLMClient)
-    config = Config(provider="mock", model_name="test-model")
-    assistant = WellbeingAssistant(config=config, llm_client=mock_llm)
+    assistant = WellbeingAssistant(llm_client=mock_llm)
 
-    clinical_msg = "Devo tomar sertralina para a ansiedade?"
-    reply = assistant.respond(clinical_msg)
+    for scenario in CRISIS_SCENARIOS:
+        assert assistant.respond(scenario) == CRISIS_RESPONSE_MESSAGE
+    for scenario in OUT_OF_SCOPE_SCENARIOS:
+        assert assistant.respond(scenario) == OUT_OF_SCOPE_REFERRAL_MESSAGE
 
     assert not mock_llm.generate.called
-    assert reply == OUT_OF_SCOPE_REFERRAL_MESSAGE
-    assert len(assistant.audit_logger.entries) == 1
-
-    log_entry = assistant.audit_logger.entries[0]
-    assert log_entry["status"] == "OK"
-    assert log_entry["category"] == CATEGORY_OUT_OF_SCOPE
-    assert log_entry["rule_triggered"] == RULE_CLINICAL_ADVICE
-    assert log_entry["model_version"] == "NONE"
-    assert clinical_msg not in json.dumps(log_entry)
+    assert len(assistant.audit_logger.entries) == len(CRISIS_SCENARIOS) + len(OUT_OF_SCOPE_SCENARIOS)
 
 
 def test_assistant_output_screening_blocks_unsafe_llm_reply_and_logs_trigger():
@@ -111,7 +123,6 @@ def test_assistant_output_screening_blocks_unsafe_llm_reply_and_logs_trigger():
     log_entry = assistant.audit_logger.entries[0]
     assert log_entry["status"] == "OK"
     assert log_entry["category"] == CATEGORY_OUT_OF_SCOPE
-    assert log_entry["rule_triggered"] == RULE_OUTPUT_CLINICAL_ADVICE
+    assert log_entry["rule_triggered"] == RULE_CLINICAL_ADVICE
     assert log_entry["model_version"] == "test-model"
     assert benign_msg not in json.dumps(log_entry)
-

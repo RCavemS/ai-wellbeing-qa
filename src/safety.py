@@ -11,11 +11,10 @@ CATEGORY_STANDARD = "STANDARD_CHECKIN"
 CATEGORY_CRISIS = "CRISIS_ESCALATION"
 CATEGORY_OUT_OF_SCOPE = "OUT_OF_SCOPE_CLINICAL"
 
-# Rule identifiers
+# Rule identifiers matching docs/requirements.md (AC-FR3.4, AC-FR4.4)
 RULE_NONE = "NONE"
 RULE_CRISIS_HARM = "RULE_CRISIS_HARM"
 RULE_CLINICAL_ADVICE = "RULE_CLINICAL_ADVICE"
-RULE_OUTPUT_CLINICAL_ADVICE = "RULE_OUTPUT_CLINICAL_ADVICE"
 
 # Verified Portuguese crisis resources (verified by Rafael Soares / RCavemS on 15-11-2026)
 # Issue #4 comment: https://github.com/RCavemS/ai-wellbeing-qa/issues/4#issuecomment-6901923797
@@ -27,7 +26,8 @@ CRISIS_RESOURCES = {
         "name": "112",
         "number": "112",
         "hours": "24/7",
-        "description": "Emergency services",
+        "description": "emergência",
+        "source_url": "https://www.inem.pt/",
     },
     "SNS 24": {
         "name": "SNS 24",
@@ -43,22 +43,39 @@ CRISIS_RESOURCES = {
     },
 }
 
-# Fixed crisis response (AC-FR3.2, AC-FR3.3: exact numbers, no coaching, no follow-up questions)
+# Fixed crisis response derived from CRISIS_RESOURCES (AC-FR3.2, AC-FR3.3: no coaching, no follow-up questions)
 CRISIS_RESPONSE_MESSAGE = (
     "Lamento muito que estejas a passar por um momento tão difícil. "
     "A tua segurança é prioritária e não estás sozinho. "
     "Por favor, contacta imediatamente um profissional de saúde ou um dos serviços de apoio verificados em Portugal:\n"
-    "- 112: emergência, 24/7\n"
-    "- SNS 24: 808 24 24 24, 24/7\n"
-    "- SOS Voz Amiga: 213 544 545, horário: 15h30 às 00h30"
+    f"- 112: emergência, {CRISIS_RESOURCES['112']['hours']}\n"
+    f"- SNS 24: {CRISIS_RESOURCES['SNS 24']['number']}, {CRISIS_RESOURCES['SNS 24']['hours']}\n"
+    f"- SOS Voz Amiga: {CRISIS_RESOURCES['SOS Voz Amiga']['number']}, horário: {CRISIS_RESOURCES['SOS Voz Amiga']['hours']}"
 )
 
 # Fixed out-of-scope clinical referral response (AC-FR4.1, AC-FR4.2, AC-FR4.3)
 OUT_OF_SCOPE_REFERRAL_MESSAGE = (
     "Compreendo a tua preocupação, mas enquanto assistente de check-in de bem-estar não sou um profissional "
-    "de saúde e não posso realizar diagnósticos médicos, prescrever medicação ou recomendar tratamentos clínicos. "
-    "Para avaliares esta questão com segurança, recomendo que consultes um médico, psiquiatra ou psicólogo, "
-    "ou que contactes a linha SNS 24 (808 24 24 24)."
+    "de saúde e não posso realizar diagnósticos médicos, fornecer orientação sobre medicação ou recomendar tratamentos clínicos. "
+    "Para avaliares esta questão com segurança, recomendo que consultes o teu médico prescritor, farmacêutico, "
+    "psiquiatra ou psicólogo."
+)
+
+# Shared regex fragments to avoid duplication
+_DRUG_NAMES = (
+    r"(?:sertralina|sertraline|fluoxetina|fluoxetine|escitalopram|paroxetina|paroxetine|venlafaxina|venlafaxine|"
+    r"xanax|alprazolam|diazepam|lorazepam|rivotril|clonazepam|zolpidem|ritalina|ritalin|concerta|"
+    r"antidepressivos?|antidepressants?|ansiol[íi]ticos?|anxiolytics?|psicof[áa]rmacos?)"
+)
+_MED_NOUNS = (
+    r"(?:medica[çc][ãa]o|medicamentos?|comprimidos?|rem[ée]dios?|medication|meds|medicine|pills|dosage|dose|"
+    r"prescri[çc][ãa]o|receita\s+m[ée]dica|prescription)"
+)
+_DISORDER_NAMES = (
+    r"(?:depress[ãa]o(?:\s+cl[íi]nica)?|(?:clinical\s+)?depression|clinically\s+depressed|tdah|adhd|"
+    r"perturba[çc][ãa]o\s+bipolar|bipolar\s+disorder|esquizofrenia|schizophrenia|"
+    r"perturba[çc][ãa]o\s+de\s+p[âa]nico|panic\s+disorder|ansiedade\s+generalizada|"
+    r"generalized\s+anxiety(?:\s+disorder)?|ptsd|stress\s+p[óo]s-traum[áa]tico|ocd|poc|burnout\s+cl[íi]nico|clinical\s+burnout)"
 )
 
 # Benign everyday idioms that must NOT trigger crisis escalation (AC-FR3.5)
@@ -164,35 +181,28 @@ _CRISIS_PATTERNS = [
     ),
 ]
 
-# Out-of-scope clinical advice, diagnosis, and medication patterns for input screening (FR4)
+# Out-of-scope clinical advice, diagnosis, and medication inquiry patterns (FR4)
 _OUT_OF_SCOPE_INPUT_PATTERNS = [
-    # Diagnosis requests (PT-PT & EN)
+    # Explicit diagnosis requests (PT-PT & EN)
     re.compile(
         r"\b(diagnosticar(-me)?|diagn[óo]stico|diagnose(\s+me)?|diagnosis)\b",
         re.IGNORECASE,
     ),
     re.compile(
-        r"\b(acho\s+que\s+tenho|ser[áa]\s+que\s+tenho|tenho|sofro\s+de|do\s+you\s+think\s+i\s+have|do\s+i\s+have|am\s+i\s+suffering\s+from|am\s+i|is\s+this)\s+"
-        r"(depress[ãa]o(\s+cl[íi]nica)?|(clinical\s+)?depression|clinically\s+depressed|tdah|adhd|perturba[çc][ãa]o\s+bipolar|bipolar\s+disorder|esquizofrenia|schizophrenia|"
-        r"perturba[çc][ãa]o\s+de\s+p[âa]nico|panic\s+disorder|ansiedade\s+generalizada|generalized\s+anxiety|ptsd|stress\s+p[óo]s-traum[áa]tico|ocd|poc)\b",
-        re.IGNORECASE,
-    ),
-    # Specific psychiatric medications & pharmaceutical queries (PT-PT & EN)
-    re.compile(
-        r"\b(sertralina|sertraline|fluoxetina|fluoxetine|escitalopram|paroxetina|paroxetine|venlafaxina|venlafaxine|"
-        r"xanax|alprazolam|diazepam|lorazepam|rivotril|clonazepam|zolpidem|ritalina|ritalin|concerta|"
-        r"antidepressivos?|antidepressants?|ansiol[íi]ticos?|anxiolytics?|psicof[áa]rmacos?)\b",
-        re.IGNORECASE,
-    ),
-    # Medication / dosage advice requests (PT-PT & EN)
-    re.compile(
-        r"\b(medica[çc][ãa]o|medicamentos?|comprimidos?|rem[ée]dios?|medication|meds|medicine|pills|dosage|dose|prescri[çc][ãa]o|receita\s+m[ée]dica|prescription)\b"
-        r".*?\b(devo|posso|tomar|parar|recomendas|aconselhas|should\s+i|can\s+i|take|stop|recommend|advise)\b",
+        rf"\b(acho\s+que\s+tenho|ser[áa]\s+que\s+tenho|do\s+you\s+think\s+i\s+have|do\s+i\s+have|am\s+i|is\s+this)\s+{_DISORDER_NAMES}\b",
         re.IGNORECASE,
     ),
     re.compile(
-        r"\b(devo|posso|que|qual|should\s+i|can\s+i|what|which)\b"
-        r".*?\b(medica[çc][ãa]o|medicamentos?|comprimidos?|rem[ée]dios?|medication|meds|medicine|pills|dosage|dose|prescri[çc][ãa]o|receita\s+m[ée]dica|prescription)\b",
+        rf"\b(tenho|sofro\s+de)\s+{_DISORDER_NAMES}.*(\?|\bou\s+[ée]\b|\bo\s+que\s+achas\b)",
+        re.IGNORECASE,
+    ),
+    # Medication & dosage advice inquiries (PT-PT & EN)
+    re.compile(
+        rf"\b(devo|posso|que|qual|como|should\s+i|can\s+i|what|which)\b.*?\b({_DRUG_NAMES}|{_MED_NOUNS})\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        rf"\b({_DRUG_NAMES}|{_MED_NOUNS})\b.*?\b(devo|posso|tomar|parar|recomendas|aconselhas|should\s+i|can\s+i|take|stop|recommend|advise)\b",
         re.IGNORECASE,
     ),
     # Clinical treatment requests (PT-PT & EN)
@@ -204,20 +214,14 @@ _OUT_OF_SCOPE_INPUT_PATTERNS = [
 
 # Output screening patterns to block unsafe LLM replies giving diagnosis, medication, or treatment advice (AC-FR4.5)
 _UNSAFE_OUTPUT_PATTERNS = [
-    re.compile(
-        r"\b(sertralina|sertraline|fluoxetina|fluoxetine|escitalopram|paroxetina|paroxetine|venlafaxina|venlafaxine|"
-        r"xanax|alprazolam|diazepam|lorazepam|rivotril|clonazepam|zolpidem|ritalina|ritalin|concerta|"
-        r"antidepressivos?|antidepressants?|ansiol[íi]ticos?|anxiolytics?|psicof[áa]rmacos?)\b",
-        re.IGNORECASE,
-    ),
+    re.compile(rf"\b{_DRUG_NAMES}\b", re.IGNORECASE),
     re.compile(r"\b\d+\s*(mg|mcg|ml|comprimidos?|pills?|tablets?)\b", re.IGNORECASE),
     re.compile(
-        r"\b(o\s+meu\s+diagn[óo]stico\s+[ée]|i\s+diagnose\s+you|tens\s+(depress[ãa]o(\s+cl[íi]nica)?|perturba[çc][ãa]o|tdah)|"
-        r"you\s+have\s+(generalized\s+anxiety\s+disorder|clinical\s+depression|bipolar\s+disorder|adhd|panic\s+disorder))\b",
+        rf"\b(o\s+meu\s+diagn[óo]stico\s+[ée]|i\s+diagnose\s+you|tens\s+{_DISORDER_NAMES}|you\s+have\s+{_DISORDER_NAMES})\b",
         re.IGNORECASE,
     ),
     re.compile(
-        r"\b(prescrevo|i\s+prescribe|deves\s+iniciar\s+tratamento|recomendo\s+que\s+tomes|podes\s+parar\s+de\s+tomar|you\s+should\s+(take|stop\s+taking))\b",
+        rf"\b(prescrevo|i\s+prescribe|deves\s+iniciar\s+tratamento|(recomendo\s+que\s+tomes|podes\s+parar\s+de\s+tomar|you\s+should\s+(take|stop\s+taking))\s+.*?\b({_DRUG_NAMES}|{_MED_NOUNS}))\b",
         re.IGNORECASE,
     ),
 ]
@@ -231,6 +235,14 @@ class SafetyResult:
     category: str
     rule_triggered: str
     response: Optional[str] = None
+
+
+_SAFE_RESULT = SafetyResult(
+    triggered=False,
+    category=CATEGORY_STANDARD,
+    rule_triggered=RULE_NONE,
+    response=None,
+)
 
 
 class SafetyLayer:
@@ -264,43 +276,28 @@ class SafetyLayer:
                     response=OUT_OF_SCOPE_REFERRAL_MESSAGE,
                 )
 
-        return SafetyResult(
-            triggered=False,
-            category=CATEGORY_STANDARD,
-            rule_triggered=RULE_NONE,
-            response=None,
-        )
+        return _SAFE_RESULT
 
     def screen_output(self, reply: str) -> SafetyResult:
         """Screen LLM output before returning to user; replace unsafe clinical advice with FR4 referral (AC-FR4.5)."""
         stripped = reply.strip()
         if stripped in (OUT_OF_SCOPE_REFERRAL_MESSAGE.strip(), CRISIS_RESPONSE_MESSAGE.strip()):
-            return SafetyResult(
-                triggered=False,
-                category=CATEGORY_STANDARD,
-                rule_triggered=RULE_NONE,
-                response=None,
-            )
+            return _SAFE_RESULT
 
         for pattern in _UNSAFE_OUTPUT_PATTERNS:
             if pattern.search(reply):
                 return SafetyResult(
                     triggered=True,
                     category=CATEGORY_OUT_OF_SCOPE,
-                    rule_triggered=RULE_OUTPUT_CLINICAL_ADVICE,
+                    rule_triggered=RULE_CLINICAL_ADVICE,
                     response=OUT_OF_SCOPE_REFERRAL_MESSAGE,
                 )
 
-        return SafetyResult(
-            triggered=False,
-            category=CATEGORY_STANDARD,
-            rule_triggered=RULE_NONE,
-            response=None,
-        )
+        return _SAFE_RESULT
 
 
 class AuditLogger:
-    """Structured audit logger for assistant interactions and safety triggers (FR5).
+    """Structured audit logger for safety triggers (FR5).
 
     Enforces AC-FR5.1 schema and AC-FR5.2 privacy rule (raw message text is never stored).
     """
@@ -328,4 +325,3 @@ class AuditLogger:
         }
         self.entries.append(entry)
         return entry
-

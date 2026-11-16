@@ -13,8 +13,7 @@ from src.prompts import (
 from src.safety import (
     AuditLogger,
     SafetyLayer,
-    CATEGORY_STANDARD,
-    RULE_NONE,
+    SafetyResult,
 )
 
 
@@ -40,25 +39,33 @@ class WellbeingAssistant:
             return DEFAULT_GREETING_EN
         return DEFAULT_GREETING_PT
 
+    def _log_safety_trigger(
+        self,
+        safety_result: SafetyResult,
+        model_version: str,
+        start_time: float,
+    ) -> None:
+        latency_ms = (time.perf_counter() - start_time) * 1000.0
+        self.audit_logger.log(
+            status="OK",
+            category=safety_result.category,
+            rule_triggered=safety_result.rule_triggered,
+            model_version=model_version,
+            latency_ms=latency_ms,
+        )
+
     def respond(
         self,
         message: str,
         session_history: Optional[list[dict]] = None,
     ) -> str:
-        """Process user message through safety layer and LLM (FR1, FR2, FR3, FR4, FR5)."""
+        """Process user message through safety layer and LLM (FR1, FR2, FR3, FR4)."""
         start_time = time.perf_counter()
 
         # 1. Input screening (FR3 Crisis Escalation & FR4 Out-of-Scope Clinical)
         input_safety = self.safety_layer.screen_input(message)
         if input_safety.triggered:
-            latency_ms = (time.perf_counter() - start_time) * 1000.0
-            self.audit_logger.log(
-                status="OK",
-                category=input_safety.category,
-                rule_triggered=input_safety.rule_triggered,
-                model_version="NONE",
-                latency_ms=latency_ms,
-            )
+            self._log_safety_trigger(input_safety, model_version="NONE", start_time=start_time)
             return input_safety.response or ""
 
         # 2. LLM generation for standard check-in (FR1, FR2)
@@ -70,24 +77,10 @@ class WellbeingAssistant:
 
         # 3. Output screening guardrail (AC-FR4.5)
         output_safety = self.safety_layer.screen_output(reply)
-        latency_ms = (time.perf_counter() - start_time) * 1000.0
         if output_safety.triggered:
-            self.audit_logger.log(
-                status="OK",
-                category=output_safety.category,
-                rule_triggered=output_safety.rule_triggered,
-                model_version=self.config.model_name,
-                latency_ms=latency_ms,
-            )
+            self._log_safety_trigger(output_safety, model_version=self.config.model_name, start_time=start_time)
             return output_safety.response or ""
 
-        self.audit_logger.log(
-            status="OK",
-            category=CATEGORY_STANDARD,
-            rule_triggered=RULE_NONE,
-            model_version=self.config.model_name,
-            latency_ms=latency_ms,
-        )
         return reply
 
 
