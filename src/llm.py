@@ -43,12 +43,15 @@ class MockLLMClient(BaseLLMClient):
 class GeminiLLMClient(BaseLLMClient):
     """Google Gemini API client using standard HTTP requests."""
 
-    def __init__(self, api_key: str, model_name: str = "gemini-1.5-flash", temperature: float = 0.7):
+    def __init__(self, api_key: str, model_name: Optional[str] = None, temperature: float = 0.7):
         self.api_key = api_key
         self.model_name = model_name
         self.temperature = temperature
 
     def generate(self, prompt: str, system_prompt: Optional[str] = None) -> str:
+        if not self.model_name:
+            raise ValueError("Model name must be configured via environment or settings.")
+
         import httpx
 
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model_name}:generateContent?key={self.api_key}"
@@ -77,15 +80,20 @@ def get_llm_client(config: Config) -> BaseLLMClient:
     """Factory function to build LLM client based on configuration."""
     provider = config.provider.lower().strip()
 
-    if provider == "gemini" and config.api_key:
-        return GeminiLLMClient(
-            api_key=config.api_key,
-            model_name=config.model_name,
-            temperature=config.temperature,
-        )
+    if provider == "gemini":
+        if not config.model_name:
+            raise ValueError(
+                "LLM_MODEL is not set. Please set LLM_MODEL in your .env file before starting."
+            )
+        if config.api_key:
+            return GeminiLLMClient(
+                api_key=config.api_key,
+                model_name=config.model_name,
+                temperature=config.temperature,
+            )
 
     # Default to mock/synthetic client for safe offline execution
     return MockLLMClient(
-        model_name=config.model_name,
+        model_name=config.model_name or "mock-model",
         temperature=config.temperature,
     )

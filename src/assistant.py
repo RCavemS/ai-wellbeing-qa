@@ -1,5 +1,6 @@
 """Wellbeing Assistant service coordinating conversation flow and LLM interactions."""
 
+import sys
 import time
 from typing import Optional
 from src.config import Config, get_config
@@ -28,6 +29,10 @@ class WellbeingAssistant:
         audit_logger: Optional[AuditLogger] = None,
     ):
         self.config = config or get_config()
+        if self.config.provider.lower().strip() == "gemini" and not self.config.model_name:
+            raise ValueError(
+                "LLM_MODEL is not set. Please set LLM_MODEL in your .env file before starting."
+            )
         self.llm_client = llm_client or get_llm_client(self.config)
         self.safety_layer = safety_layer or SafetyLayer()
         self.audit_logger = audit_logger or AuditLogger()
@@ -78,17 +83,28 @@ class WellbeingAssistant:
         # 3. Output screening guardrail (AC-FR4.5)
         output_safety = self.safety_layer.screen_output(reply)
         if output_safety.triggered:
-            self._log_safety_trigger(output_safety, model_version=self.config.model_name, start_time=start_time)
+            self._log_safety_trigger(output_safety, model_version=str(self.config.model_name or "NONE"), start_time=start_time)
             return output_safety.response or ""
 
         return reply
+
+
+def get_session_header(config: Config) -> str:
+    """Format session header line."""
+    model_display = "mock" if config.provider == "mock" else (config.model_name or "None")
+    return f"Provider: {config.provider} | Model: {model_display}"
 
 
 def main():
     """Run local interactive check-in session from the terminal."""
     print("=== AI Wellbeing Check-in Assistant (Local Session) ===")
     config = get_config()
-    print(f"Provider: {config.provider} | Model: {config.model_name}")
+    print(get_session_header(config))
+
+    if config.provider.lower().strip() == "gemini" and not config.model_name:
+        print("Error: LLM_MODEL is not set. Please set LLM_MODEL in your .env file before starting.")
+        sys.exit(1)
+
     print("Type 'exit' or 'quit' to end the session.\n")
 
     assistant = WellbeingAssistant(config=config)

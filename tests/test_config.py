@@ -8,7 +8,7 @@ def test_config_default_values():
     with patch.dict(os.environ, {}, clear=True):
         config = Config()
         assert config.provider == "mock"
-        assert config.model_name == "gemini-1.5-flash"
+        assert config.model_name is None
         assert config.temperature == 0.7
         assert config.api_key is None
 
