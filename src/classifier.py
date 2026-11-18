@@ -85,14 +85,18 @@ class MockRiskClassifier(BaseRiskClassifier):
         self,
         default_label: str = LABEL_NONE,
         responses: Optional[list[Union[str, Exception]]] = None,
+        max_attempts: int = DEFAULT_MAX_ATTEMPTS,
     ):
         self.default_label = default_label
         self._responses = list(responses) if responses is not None else []
         self.call_count: int = 0
+        self.request_count: int = 0
+        self.max_attempts: int = max(1, int(max_attempts))
 
     def classify(self, message: str) -> str:
         """Return scripted or default risk label without making any network calls."""
         self.call_count += 1
+        self.request_count += 1
         if self._responses:
             next_item = self._responses.pop(0)
             if isinstance(next_item, Exception):
@@ -119,6 +123,7 @@ class GeminiRiskClassifier(BaseRiskClassifier):
         self.max_attempts = max(1, int(max_attempts))
         self.backoff_base = backoff_base
         self.thinking_level = thinking_level
+        self.request_count: int = 0
 
     def classify(self, message: str) -> str:
         """Classify message using Gemini API with temperature=0 and strict JSON schema."""
@@ -150,6 +155,7 @@ class GeminiRiskClassifier(BaseRiskClassifier):
 
         response: Optional[httpx.Response] = None
         for attempt in range(1, self.max_attempts + 1):
+            self.request_count += 1
             try:
                 response = httpx.post(url, headers=headers, json=payload, timeout=self.timeout)
             except (httpx.TimeoutException, TimeoutError) as exc:

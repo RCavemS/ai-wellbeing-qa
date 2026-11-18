@@ -18,7 +18,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from src.classifier import BaseRiskClassifier, get_risk_classifier
+from src.classifier import BaseRiskClassifier, DEFAULT_MAX_ATTEMPTS, get_risk_classifier
 from src.config import Config, get_config
 from src.safety import (
     CATEGORY_CRISIS,
@@ -144,20 +144,29 @@ def run_classification(
         )
         sys.exit(1)
 
-    max_api_calls = len(messages) * repeats
-    print(f"Maximum number of API calls: {max_api_calls} ({len(messages)} messages × {repeats} repeats)")
+    active_classifier = classifier or (safety_layer.classifier if safety_layer is not None else None)
+    max_attempts = getattr(active_classifier, "max_attempts", DEFAULT_MAX_ATTEMPTS)
+    max_classifications = len(messages) * repeats
+    max_http_requests = max_classifications * max_attempts
+    print(
+        f"Maximum number of API calls: {max_classifications} classifications ({len(messages)} messages × {repeats} repeats), "
+        f"up to {max_http_requests} HTTP requests (max_attempts={max_attempts})"
+    )
 
     if not yes:
         print("Stopping: run with --yes to proceed.", file=sys.stderr)
         sys.exit(1)
 
     if classifier is None:
-        classifier = get_risk_classifier(config)
+        if safety_layer is not None:
+            classifier = safety_layer.classifier
+        else:
+            classifier = get_risk_classifier(config)
 
     if not stage2_only and safety_layer is None:
         safety_layer = SafetyLayer(classifier=classifier)
 
-    api_calls_made = 0
+    initial_request_count = getattr(classifier, "request_count", 0)
     per_message_results: list[dict[str, Any]] = []
 
     for line_num, (message, expected_label) in enumerate(zip(messages, labels), start=1):
@@ -177,7 +186,6 @@ def run_classification(
                     stage = "STAGE_2"
                     error_type = getattr(exc, "error_type", type(exc).__name__)
 
-                api_calls_made += 1
                 if delay > 0:
                     time.sleep(delay)
             else:
@@ -190,7 +198,6 @@ def run_classification(
 
                 reached_stage_2 = not (stage == "STAGE_1" and label == "CRISIS")
                 if reached_stage_2:
-                    api_calls_made += 1
                     if delay > 0:
                         time.sleep(delay)
 
@@ -212,6 +219,8 @@ def run_classification(
                 "agreed": all_agreed,
             }
         )
+
+    api_calls_made = getattr(classifier, "request_count", 0) - initial_request_count
 
     # Output per-message table (never print or save message text)
     print("\n--- Per-Message Classification Results ---")

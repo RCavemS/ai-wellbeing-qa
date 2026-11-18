@@ -126,6 +126,7 @@ def test_gemini_classifier_retries_on_429_then_succeeds():
 
     assert label == LABEL_CLINICAL
     assert mock_post.call_count == 2
+    assert classifier.request_count == 2
     mock_sleep.assert_called_once_with(0.25)
 
 
@@ -216,3 +217,12 @@ def test_get_risk_classifier_startup_fails_fast_when_gemini_missing_key_or_model
     )
     with pytest.raises(ValueError, match="-latest"):
         get_risk_classifier(config_latest_alias)
+
+
+def test_gemini_classifier_request_count_excludes_credential_failures():
+    """Issue #35: Credential failure before any HTTP request leaves request_count at 0."""
+    classifier = GeminiRiskClassifier(api_key="", model_name="gemini-3.5-flash-lite")
+    assert classifier.request_count == 0
+    with pytest.raises(ClassifierError):
+        classifier.classify("Olá, tudo bem?")
+    assert classifier.request_count == 0
