@@ -450,3 +450,40 @@ def test_stage1_crisis_skips_stage2_and_delay(
     captured = capsys.readouterr().out
     assert "run 1: CRISIS (STAGE_1)" in captured
     assert "API calls made: 0" in captured
+
+
+def test_stage1_clinical_fallback_on_stage2_error_counts_api_call_and_clinical_label(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+):
+    """Issue #38: Stage 1 clinical match + Stage 2 error maps to CLINICAL (STAGE_1) and counts API call."""
+    msg_file = tmp_path / "messages.txt"
+    msg_file.write_text("Devo tomar sertralina para dormir?\n", encoding="utf-8")
+    lbl_file = tmp_path / "labels.txt"
+    lbl_file.write_text("CLINICAL\n", encoding="utf-8")
+
+    responses = [
+        ClassifierError("Timeout", error_type="TimeoutError"),
+        ClassifierError("Timeout", error_type="TimeoutError"),
+    ]
+    mock_classifier = MockRiskClassifier(responses=responses)
+    config = Config(classifier_provider="gemini")
+
+    result = run_classification(
+        messages_path=msg_file,
+        labels_path=lbl_file,
+        repeats=2,
+        delay=0,
+        yes=True,
+        classifier=mock_classifier,
+        config=config,
+    )
+
+    assert mock_classifier.call_count == 2
+    assert result["api_calls_made"] == 2
+    assert result["clinical_detection"] == (1, 1)
+    assert result["grouped_errors"] == {}
+
+    captured = capsys.readouterr().out
+    assert "line 1 | expected: CLINICAL | run 1: CLINICAL (STAGE_1) | run 2: CLINICAL (STAGE_1) | agreed: True" in captured
+    assert "Clinical detection: 1/1 (100.0%)" in captured
+    assert "API calls made: 2" in captured
