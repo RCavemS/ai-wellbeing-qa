@@ -3,6 +3,7 @@
 import sys
 import time
 from typing import Optional
+from src.classifier import BaseRiskClassifier, validate_classifier_config
 from src.config import Config, get_config
 from src.llm import BaseLLMClient, get_llm_client
 from src.prompts import (
@@ -27,6 +28,7 @@ class WellbeingAssistant:
         llm_client: Optional[BaseLLMClient] = None,
         safety_layer: Optional[SafetyLayer] = None,
         audit_logger: Optional[AuditLogger] = None,
+        classifier: Optional[BaseRiskClassifier] = None,
     ):
         self.config = config or get_config()
         if self.config.provider.lower().strip() == "gemini" and not self.config.model_name:
@@ -34,7 +36,7 @@ class WellbeingAssistant:
                 "LLM_MODEL is not set. Please set LLM_MODEL in your .env file before starting."
             )
         self.llm_client = llm_client or get_llm_client(self.config)
-        self.safety_layer = safety_layer or SafetyLayer()
+        self.safety_layer = safety_layer or SafetyLayer(classifier=classifier, config=self.config)
         self.audit_logger = audit_logger or AuditLogger()
 
     def greet(self, language: str = "pt") -> str:
@@ -52,7 +54,7 @@ class WellbeingAssistant:
     ) -> None:
         latency_ms = (time.perf_counter() - start_time) * 1000.0
         self.audit_logger.log(
-            status="OK",
+            status=safety_result.status,
             category=safety_result.category,
             rule_triggered=safety_result.rule_triggered,
             model_version=model_version,
@@ -70,7 +72,12 @@ class WellbeingAssistant:
         # 1. Input screening (FR3 Crisis Escalation & FR4 Out-of-Scope Clinical)
         input_safety = self.safety_layer.screen_input(message)
         if input_safety.triggered:
-            self._log_safety_trigger(input_safety, model_version="NONE", start_time=start_time)
+            model_ver = (
+                str(self.config.classifier_model or "NONE")
+                if input_safety.stage_decided == "STAGE_2"
+                else "NONE"
+            )
+            self._log_safety_trigger(input_safety, model_version=model_ver, start_time=start_time)
             return input_safety.response or ""
 
         # 2. LLM generation for standard check-in (FR1, FR2)
@@ -103,6 +110,12 @@ def main():
 
     if config.provider.lower().strip() == "gemini" and not config.model_name:
         print("Error: LLM_MODEL is not set. Please set LLM_MODEL in your .env file before starting.")
+        sys.exit(1)
+
+    try:
+        validate_classifier_config(config)
+    except ValueError as exc:
+        print(f"Error: {exc}")
         sys.exit(1)
 
     print("Type 'exit' or 'quit' to end the session.\n")

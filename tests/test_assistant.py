@@ -162,3 +162,101 @@ def test_gemini_without_llm_model_stops_startup_in_main(capsys):
     captured = capsys.readouterr().out
     assert "Error: LLM_MODEL is not set. Please set LLM_MODEL in your .env file" in captured
     assert "Assistant:" not in captured
+
+
+def test_assistant_stage2_classifier_triggers_and_fail_safe_bypass_conversation_llm():
+    """Verify Stage 2 CRISIS, CLINICAL, and SYSTEM_ERROR fail-safe bypass conversational LLM and audit log accurately."""
+    from src.classifier import ClassifierError, LABEL_CLINICAL, LABEL_CRISIS, MockRiskClassifier
+    from src.safety import (
+        CATEGORY_SYSTEM_ERROR,
+        RULE_CLASSIFIER_CLINICAL,
+        RULE_CLASSIFIER_CRISIS,
+        RULE_CLASSIFIER_FAIL_SAFE,
+        SAFE_FALLBACK_MESSAGE,
+        SafetyLayer,
+    )
+
+    mock_llm = MagicMock(spec=BaseLLMClient)
+    mock_clf = MockRiskClassifier(
+        responses=[
+            LABEL_CRISIS,
+            LABEL_CLINICAL,
+            ClassifierError("timeout", error_type="TimeoutError"),
+        ]
+    )
+    config = Config(provider="mock", classifier_provider="mock", classifier_model="gemini-3.5-flash-lite")
+    assistant = WellbeingAssistant(
+        config=config,
+        llm_client=mock_llm,
+        safety_layer=SafetyLayer(classifier=mock_clf),
+    )
+
+    # 1. Stage 2 CRISIS
+    secret_msg_1 = "PRIVATE_MSG_A1 acho q hoje é o último check-in q faço"
+    reply_1 = assistant.respond(secret_msg_1)
+    assert reply_1 == CRISIS_RESPONSE_MESSAGE
+
+    # 2. Stage 2 CLINICAL
+    secret_msg_2 = "PRIVATE_MSG_A2 esqueci-me da sertralina ontem, tomo 2 hj?"
+    reply_2 = assistant.respond(secret_msg_2)
+    assert reply_2 == OUT_OF_SCOPE_REFERRAL_MESSAGE
+
+    # 3. Stage 2 Failure -> SYSTEM_ERROR fail-safe
+    secret_msg_3 = "PRIVATE_MSG_A3 mensagem durante falha de rede"
+    reply_3 = assistant.respond(secret_msg_3)
+    assert reply_3 == SAFE_FALLBACK_MESSAGE
+    assert "112" in reply_3
+    assert "SNS 24" in reply_3
+    assert "SOS Voz Amiga" in reply_3
+
+    assert not mock_llm.generate.called
+    assert len(assistant.audit_logger.entries) == 3
+
+    e1, e2, e3 = assistant.audit_logger.entries
+    assert e1["status"] == "OK"
+    assert e1["category"] == CATEGORY_CRISIS
+    assert e1["rule_triggered"] == RULE_CLASSIFIER_CRISIS
+    assert e1["model_version"] == "gemini-3.5-flash-lite"
+
+    assert e2["status"] == "OK"
+    assert e2["category"] == CATEGORY_OUT_OF_SCOPE
+    assert e2["rule_triggered"] == RULE_CLASSIFIER_CLINICAL
+    assert e2["model_version"] == "gemini-3.5-flash-lite"
+
+    assert e3["status"] == "ERROR"
+    assert e3["category"] == CATEGORY_SYSTEM_ERROR
+    assert e3["rule_triggered"] == RULE_CLASSIFIER_FAIL_SAFE
+    assert e3["model_version"] == "gemini-3.5-flash-lite"
+
+    serialized_logs = json.dumps(assistant.audit_logger.entries)
+    assert "PRIVATE_MSG_A1" not in serialized_logs
+    assert "PRIVATE_MSG_A2" not in serialized_logs
+    assert "PRIVATE_MSG_A3" not in serialized_logs
+
+
+@pytest.mark.parametrize(
+    "classifier_model,api_key,expected_match",
+    [
+        ("", "valid-key", "CLASSIFIER_MODEL is not set"),
+        ("gemini-3.5-flash-lite", "", "LLM_API_KEY is not set"),
+    ],
+)
+def test_classifier_gemini_without_model_or_key_stops_startup(classifier_model, api_key, expected_match, capsys):
+    """Startup fails fast with CLASSIFIER_PROVIDER='gemini' and no key or model in both WellbeingAssistant and main()."""
+    config = Config(
+        provider="mock",
+        classifier_provider="gemini",
+        classifier_model=classifier_model,
+        api_key=api_key,
+    )
+    with pytest.raises(ValueError, match=expected_match):
+        WellbeingAssistant(config=config)
+
+    with patch("src.assistant.get_config", return_value=config):
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+        assert exc_info.value.code == 1
+
+    captured = capsys.readouterr().out
+    assert f"Error: {expected_match}" in captured
+    assert "Assistant:" not in captured
