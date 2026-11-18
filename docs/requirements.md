@@ -96,19 +96,20 @@ In accordance with shift-left testing principles, clear, testable, and unambiguo
   - *Typos and misspellings* (e.g., "kero morrer", "suicido")
   - *Mixed language / code-switching* (e.g., "feeling so low, quero desaparecer")
   - *Benign idioms* (e.g., "this exam is killing me", "estou a morrer de sono" — must NOT trigger crisis escalation)
+  - *Harm to others* (e.g., "vou magoar alguém", "estou a pensar em ferir uma pessoa", "I am going to hurt someone", "I'm thinking about harming another person")
 
 #### Acceptance Criteria
 - **AC-FR3.1 (Deterministic Bypass):**
-  - **Given** a user input containing self-harm keywords, suicidal phrases, or acute crisis intent in PT-PT or English,
+  - **Given** a user input containing self-harm keywords, suicidal phrases, intent to harm others, or acute crisis intent in PT-PT or English,
   - **When** the safety layer intercepts the message,
-  - **Then** the LLM generation must be bypassed completely, returning a pre-configured deterministic crisis response in $< 20\text{ ms}$.
-- **AC-FR3.2 (Mandatory Portuguese Crisis Helplines):**
+  - **Then** the LLM generation must be bypassed completely, returning a pre-configured deterministic crisis response in $< 20\text{ ms}$, with **112** shown first in the crisis message.
+- **AC-FR3.2 (Mandatory Portuguese Crisis Helplines & Availability):**
   - **Given** a crisis escalation response is triggered,
   - **When** the message is formatted,
-  - **Then** it must contain exactly the following verified emergency and crisis contact details:
-    1. **112**
-    2. **SNS 24**: `808 24 24 24`
-    3. **SOS Voz Amiga**: `213 544 545`
+  - **Then** it must contain exactly the following verified emergency and crisis contact details, with **112** shown first:
+    1. **112** (emergência, 24/7)
+    2. **SNS 24**: `808 24 24 24` (24/7)
+    3. **SOS Voz Amiga**: `213 544 545` (horário: 15h30 às 00h30)
   - *Note:* Verified by Rafael Soares against official sources on 15-11-2026; see issue comment.
 - **AC-FR3.3 (Cessation of Coaching):**
   - **Given** a crisis escalation trigger,
@@ -231,11 +232,11 @@ In accordance with shift-left testing principles, clear, testable, and unambiguo
 
 The following emergency and mental health crisis helplines are verified and designated for inclusion in all **FR3** crisis escalation outputs:
 
-| Service / Helpline | Telephone Number |
-| :--- | :--- |
-| **112** | **112** |
-| **SNS 24** | **808 24 24 24** |
-| **SOS Voz Amiga** | **213 544 545** |
+| Service / Helpline | Telephone Number | Availability |
+| :--- | :--- | :--- |
+| **112** | **112** | 24/7 |
+| **SNS 24** | **808 24 24 24** | 24/7 |
+| **SOS Voz Amiga** | **213 544 545** | 15h30 às 00h30 |
 
 ---
 

@@ -172,11 +172,11 @@ _CRISIS_PATTERNS = [
     ),
     # Harm to others
     re.compile(
-        r"\b(quero|vou)\s+(matar|fazer\s+mal\s+a)\s+(algu[ée]m|outra\s+pessoa|pessoas)\b",
+        r"\b(quero|vou|estou\s+a\s+pensar\s+em|vontade\s+de)\s+(matar|fazer\s+mal\s+a|magoar|ferir|agredir|atacar)\s+(algu[ée]m|outra\s+pessoa|pessoas|outras\s+pessoas|uma\s+pessoa)\b",
         re.IGNORECASE,
     ),
     re.compile(
-        r"\b(want\s+to|going\s+to)\s+(kill|hurt|harm)\s+(someone|other\s+people)\b",
+        r"\b(want\s+to|going\s+to|gonna|thinking\s+about|will)\s+(kill|killing|hurt|hurting|harm|harming|attack|attacking)\s+(someone|somebody|another\s+person|other\s+people|people)\b",
         re.IGNORECASE,
     ),
 ]
@@ -280,6 +280,8 @@ class SafetyLayer:
 
     def screen_output(self, reply: str) -> SafetyResult:
         """Screen LLM output before returning to user; replace unsafe clinical advice with FR4 referral (AC-FR4.5)."""
+        if not isinstance(reply, str):
+            reply = str(reply)
         stripped = reply.strip()
         if stripped in (OUT_OF_SCOPE_REFERRAL_MESSAGE.strip(), CRISIS_RESPONSE_MESSAGE.strip()):
             return _SAFE_RESULT
