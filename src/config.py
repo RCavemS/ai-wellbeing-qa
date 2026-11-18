@@ -24,7 +24,7 @@ class Config:
         if env_provider and self.provider == "mock":
             self.provider = env_provider
 
-        env_model = os.getenv("GEMINI_MODEL") or os.getenv("LLM_MODEL")
+        env_model = os.getenv("LLM_MODEL")
         if env_model and self.model_name is None:
             self.model_name = env_model
 

@@ -1,8 +1,8 @@
 import json
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 import pytest
 from src.config import Config
-from src.assistant import WellbeingAssistant
+from src.assistant import WellbeingAssistant, get_session_header, main
 from src.llm import BaseLLMClient
 from src.safety import (
     CRISIS_RESPONSE_MESSAGE,
@@ -126,3 +126,39 @@ def test_assistant_output_screening_blocks_unsafe_llm_reply_and_logs_trigger():
     assert log_entry["rule_triggered"] == RULE_CLINICAL_ADVICE
     assert log_entry["model_version"] == "test-model"
     assert benign_msg not in json.dumps(log_entry)
+
+
+def test_mock_mode_session_header_shows_model_mock(capsys, monkeypatch):
+    """Verify session header displays 'Model: mock' in mock mode."""
+    config = Config(provider="mock")
+    header = get_session_header(config)
+    assert "Model: mock" in header
+    assert header == "Provider: mock | Model: mock"
+
+    # Also test interactive main() output
+    monkeypatch.setattr("builtins.input", lambda _: "exit")
+    with patch("src.assistant.get_config", return_value=config):
+        main()
+
+    captured = capsys.readouterr().out
+    assert "Provider: mock | Model: mock" in captured
+
+
+def test_gemini_without_llm_model_stops_startup_in_assistant():
+    """Verify WellbeingAssistant stops at startup if provider is gemini and LLM_MODEL is not set."""
+    config = Config(provider="gemini", model_name=None)
+    with pytest.raises(ValueError, match=r"LLM_MODEL is not set.*Please set LLM_MODEL in your \.env file"):
+        WellbeingAssistant(config=config)
+
+
+def test_gemini_without_llm_model_stops_startup_in_main(capsys):
+    """Verify main() stops at startup with error message before conversation begins when LLM_MODEL missing."""
+    config = Config(provider="gemini", model_name=None)
+    with patch("src.assistant.get_config", return_value=config):
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+        assert exc_info.value.code == 1
+
+    captured = capsys.readouterr().out
+    assert "Error: LLM_MODEL is not set. Please set LLM_MODEL in your .env file" in captured
+    assert "Assistant:" not in captured

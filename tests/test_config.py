@@ -29,13 +29,6 @@ def test_config_env_overrides():
         assert config.api_key == "test-secret-key"
 
 
-def test_config_gemini_model_env_override():
-    """Verify GEMINI_MODEL env var overrides default model name."""
-    with patch.dict(os.environ, {"GEMINI_MODEL": "custom-gemini-model"}, clear=True):
-        config = Config()
-        assert config.model_name == "custom-gemini-model"
-
-
 def test_get_config_cached():
     """Verify get_config returns a valid Config instance."""
     config = get_config()

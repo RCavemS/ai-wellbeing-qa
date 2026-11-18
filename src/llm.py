@@ -80,12 +80,17 @@ def get_llm_client(config: Config) -> BaseLLMClient:
     """Factory function to build LLM client based on configuration."""
     provider = config.provider.lower().strip()
 
-    if provider == "gemini" and config.api_key:
-        return GeminiLLMClient(
-            api_key=config.api_key,
-            model_name=config.model_name,
-            temperature=config.temperature,
-        )
+    if provider == "gemini":
+        if not config.model_name:
+            raise ValueError(
+                "LLM_MODEL is not set. Please set LLM_MODEL in your .env file before starting."
+            )
+        if config.api_key:
+            return GeminiLLMClient(
+                api_key=config.api_key,
+                model_name=config.model_name,
+                temperature=config.temperature,
+            )
 
     # Default to mock/synthetic client for safe offline execution
     return MockLLMClient(

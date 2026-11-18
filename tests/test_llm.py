@@ -32,3 +32,12 @@ def test_gemini_client_requires_configured_model_name():
     client = GeminiLLMClient(api_key="fake-key", model_name=None)
     with pytest.raises(ValueError, match="Model name must be configured"):
         client.generate("Hello")
+
+
+def test_get_llm_client_gemini_without_llm_model_raises_error():
+    """Verify get_llm_client raises ValueError when provider is gemini and LLM_MODEL is not set."""
+    import pytest
+
+    config = Config(provider="gemini", model_name=None)
+    with pytest.raises(ValueError, match="LLM_MODEL is not set"):
+        get_llm_client(config)
