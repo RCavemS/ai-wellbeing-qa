@@ -8,6 +8,7 @@ from src.config import Config
 from src.classifier import (
     BaseRiskClassifier,
     ClassifierError,
+    DEFAULT_CLASSIFIER_TIMEOUT,
     DEFAULT_THINKING_LEVEL,
     GeminiRiskClassifier,
     LABEL_CLINICAL,
@@ -58,11 +59,10 @@ def test_risk_classifier_prompt_instructs_crisis_when_unsure():
 
 
 def test_gemini_classifier_sends_strict_json_schema_temp_zero_and_default_thinking_level():
-    """Verify GeminiRiskClassifier sends temperature=0, JSON schema enum, thinkingLevel='minimal', and timeout=10s."""
+    """Verify GeminiRiskClassifier sends temperature=0, JSON schema enum, thinkingLevel='minimal', and default timeout=30s."""
     classifier = GeminiRiskClassifier(
         api_key="fake-api-key",
         model_name="gemini-3.5-flash-lite",
-        timeout=10.0,
     )
     mock_resp = _make_gemini_http_response(200, '{"label": "CRISIS"}')
 
@@ -72,7 +72,8 @@ def test_gemini_classifier_sends_strict_json_schema_temp_zero_and_default_thinki
     assert label == LABEL_CRISIS
     assert mock_post.call_count == 1
     _, kwargs = mock_post.call_args
-    assert kwargs["timeout"] == 10.0
+    assert kwargs["timeout"] == 30.0
+    assert DEFAULT_CLASSIFIER_TIMEOUT == 30.0
 
     payload = kwargs["json"]
     gen_config = payload["generationConfig"]
