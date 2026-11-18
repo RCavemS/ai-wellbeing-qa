@@ -1,20 +1,39 @@
-"""Deterministic rule-based safety layer for crisis escalation (FR3) and clinical scope boundaries (FR4)."""
+"""Hybrid rule-based (Stage 1) and LLM-classified (Stage 2) safety layer (FR3, FR4, ADR-001)."""
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import logging
 import re
+import time
 from typing import Optional
 import uuid
+from src.classifier import (
+    BaseRiskClassifier,
+    ClassifierError,
+    LABEL_CLINICAL,
+    LABEL_CRISIS,
+    LABEL_NONE,
+    MockRiskClassifier,
+    VALID_RISK_LABELS,
+    get_risk_classifier,
+)
+from src.config import Config
+
+logger = logging.getLogger(__name__)
 
 # Categories matching docs/requirements.md (FR3, FR4, FR5, FR6)
 CATEGORY_STANDARD = "STANDARD_CHECKIN"
 CATEGORY_CRISIS = "CRISIS_ESCALATION"
 CATEGORY_OUT_OF_SCOPE = "OUT_OF_SCOPE_CLINICAL"
+CATEGORY_SYSTEM_ERROR = "SYSTEM_ERROR"
 
-# Rule identifiers matching docs/requirements.md (AC-FR3.4, AC-FR4.4)
+# Rule identifiers matching docs/requirements.md (AC-FR3.4, AC-FR3.7, AC-FR4.4) and ADR-001
 RULE_NONE = "NONE"
 RULE_CRISIS_HARM = "RULE_CRISIS_HARM"
 RULE_CLINICAL_ADVICE = "RULE_CLINICAL_ADVICE"
+RULE_CLASSIFIER_CRISIS = "CLASSIFIER_CRISIS"
+RULE_CLASSIFIER_CLINICAL = "CLASSIFIER_CLINICAL"
+RULE_CLASSIFIER_FAIL_SAFE = "CLASSIFIER_FAIL_SAFE"
 
 # Verified Portuguese crisis resources (verified by Rafael Soares / RCavemS on 15-11-2026)
 # Issue #4 comment: https://github.com/RCavemS/ai-wellbeing-qa/issues/4#issuecomment-6901923797
@@ -43,14 +62,26 @@ CRISIS_RESOURCES = {
     },
 }
 
+_CRISIS_HELPLINES_BLOCK = (
+    f"- 112: emergência, {CRISIS_RESOURCES['112']['hours']}\n"
+    f"- SNS 24: {CRISIS_RESOURCES['SNS 24']['number']}, {CRISIS_RESOURCES['SNS 24']['hours']}\n"
+    f"- SOS Voz Amiga: {CRISIS_RESOURCES['SOS Voz Amiga']['number']}, horário: {CRISIS_RESOURCES['SOS Voz Amiga']['hours']}"
+)
+
 # Fixed crisis response derived from CRISIS_RESOURCES (AC-FR3.2, AC-FR3.3: no coaching, no follow-up questions)
 CRISIS_RESPONSE_MESSAGE = (
     "Lamento muito que estejas a passar por um momento tão difícil. "
     "A tua segurança é prioritária e não estás sozinho. "
     "Por favor, contacta imediatamente um profissional de saúde ou um dos serviços de apoio verificados em Portugal:\n"
-    f"- 112: emergência, {CRISIS_RESOURCES['112']['hours']}\n"
-    f"- SNS 24: {CRISIS_RESOURCES['SNS 24']['number']}, {CRISIS_RESOURCES['SNS 24']['hours']}\n"
-    f"- SOS Voz Amiga: {CRISIS_RESOURCES['SOS Voz Amiga']['number']}, horário: {CRISIS_RESOURCES['SOS Voz Amiga']['hours']}"
+    f"{_CRISIS_HELPLINES_BLOCK}"
+)
+
+# Fixed safe fallback message on Stage 2 classifier failure (AC-FR3.7, AC-FR6.5)
+SAFE_FALLBACK_MESSAGE = (
+    "De momento não é possível processar a tua mensagem devido a uma falha técnica. "
+    "Se precisares de apoio imediato ou estiveres em situação de crise, por favor contacta "
+    "um profissional de saúde ou um dos serviços de apoio verificados em Portugal:\n"
+    f"{_CRISIS_HELPLINES_BLOCK}"
 )
 
 # Fixed out-of-scope clinical referral response (AC-FR4.1, AC-FR4.2, AC-FR4.3)
@@ -235,6 +266,11 @@ class SafetyResult:
     category: str
     rule_triggered: str
     response: Optional[str] = None
+    status: str = "OK"
+    label: Optional[str] = LABEL_NONE
+    stage_decided: str = "STAGE_1"
+    latency_ms: float = 0.0
+    error_type: Optional[str] = None
 
 
 _SAFE_RESULT = SafetyResult(
@@ -246,7 +282,19 @@ _SAFE_RESULT = SafetyResult(
 
 
 class SafetyLayer:
-    """Deterministic rule-based interceptor for FR3 (Crisis) and FR4 (Out-of-Scope Clinical)."""
+    """Hybrid rule-based (Stage 1) and LLM-classified (Stage 2) safety interceptor (FR3, FR4, ADR-001)."""
+
+    def __init__(
+        self,
+        classifier: Optional[BaseRiskClassifier] = None,
+        config: Optional[Config] = None,
+    ):
+        if classifier is not None:
+            self.classifier = classifier
+        elif config is not None:
+            self.classifier = get_risk_classifier(config)
+        else:
+            self.classifier = MockRiskClassifier()
 
     def _strip_benign_idioms(self, text: str) -> str:
         cleaned = text
@@ -254,36 +302,141 @@ class SafetyLayer:
             cleaned = pattern.sub(" ", cleaned)
         return cleaned
 
+    def _emit_decision_log(self, result: SafetyResult) -> SafetyResult:
+        """Log only the label, the stage that decided, latency, and error type (never raw message text)."""
+        log_fn = logger.error if result.status == "ERROR" else logger.info
+        log_fn(
+            "safety_decision label=%s stage=%s latency_ms=%.3f error_type=%s",
+            result.label,
+            result.stage_decided,
+            result.latency_ms,
+            result.error_type or "NONE",
+        )
+        return result
+
     def screen_input(self, message: str) -> SafetyResult:
-        """Screen incoming user message before any LLM call (FR3 takes precedence over FR4)."""
+        """Screen incoming user message via Stage 1 rules and Stage 2 risk classifier (ADR-001)."""
+        start_time = time.perf_counter()
         cleaned_for_crisis = self._strip_benign_idioms(message)
 
+        # 1. Stage 1 deterministic rules run first
         for pattern in _CRISIS_PATTERNS:
             if pattern.search(cleaned_for_crisis):
-                return SafetyResult(
-                    triggered=True,
-                    category=CATEGORY_CRISIS,
-                    rule_triggered=RULE_CRISIS_HARM,
-                    response=CRISIS_RESPONSE_MESSAGE,
+                # 2. If Stage 1 returns CRISIS, skip Stage 2
+                latency_ms = round((time.perf_counter() - start_time) * 1000.0, 3)
+                return self._emit_decision_log(
+                    SafetyResult(
+                        triggered=True,
+                        category=CATEGORY_CRISIS,
+                        rule_triggered=RULE_CRISIS_HARM,
+                        response=CRISIS_RESPONSE_MESSAGE,
+                        status="OK",
+                        label=LABEL_CRISIS,
+                        stage_decided="STAGE_1",
+                        latency_ms=latency_ms,
+                        error_type=None,
+                    )
                 )
 
-        for pattern in _OUT_OF_SCOPE_INPUT_PATTERNS:
-            if pattern.search(message):
-                return SafetyResult(
+        stage1_clinical = any(pattern.search(message) for pattern in _OUT_OF_SCOPE_INPUT_PATTERNS)
+
+        # 3. Otherwise call Stage 2, including when Stage 1 returned CLINICAL
+        try:
+            stage2_label = self.classifier.classify(message)
+            if not isinstance(stage2_label, str) or stage2_label not in VALID_RISK_LABELS:
+                raise ClassifierError(
+                    "Classifier returned label outside allowed enum.",
+                    error_type="InvalidLabelError",
+                )
+        except Exception as exc:
+            error_type = exc.error_type if isinstance(exc, ClassifierError) else type(exc).__name__
+            latency_ms = round((time.perf_counter() - start_time) * 1000.0, 3)
+            return self._emit_decision_log(
+                SafetyResult(
+                    triggered=True,
+                    category=CATEGORY_SYSTEM_ERROR,
+                    rule_triggered=RULE_CLASSIFIER_FAIL_SAFE,
+                    response=SAFE_FALLBACK_MESSAGE,
+                    status="ERROR",
+                    label=None,
+                    stage_decided="STAGE_2",
+                    latency_ms=latency_ms,
+                    error_type=error_type,
+                )
+            )
+
+        latency_ms = round((time.perf_counter() - start_time) * 1000.0, 3)
+
+        # 4. Final category = the more severe of the two labels: CRISIS > CLINICAL > NONE
+        if stage2_label == LABEL_CRISIS:
+            return self._emit_decision_log(
+                SafetyResult(
+                    triggered=True,
+                    category=CATEGORY_CRISIS,
+                    rule_triggered=RULE_CLASSIFIER_CRISIS,
+                    response=CRISIS_RESPONSE_MESSAGE,
+                    status="OK",
+                    label=LABEL_CRISIS,
+                    stage_decided="STAGE_2",
+                    latency_ms=latency_ms,
+                    error_type=None,
+                )
+            )
+
+        if stage1_clinical:
+            return self._emit_decision_log(
+                SafetyResult(
                     triggered=True,
                     category=CATEGORY_OUT_OF_SCOPE,
                     rule_triggered=RULE_CLINICAL_ADVICE,
                     response=OUT_OF_SCOPE_REFERRAL_MESSAGE,
+                    status="OK",
+                    label=LABEL_CLINICAL,
+                    stage_decided="STAGE_1",
+                    latency_ms=latency_ms,
+                    error_type=None,
                 )
+            )
 
-        return _SAFE_RESULT
+        if stage2_label == LABEL_CLINICAL:
+            return self._emit_decision_log(
+                SafetyResult(
+                    triggered=True,
+                    category=CATEGORY_OUT_OF_SCOPE,
+                    rule_triggered=RULE_CLASSIFIER_CLINICAL,
+                    response=OUT_OF_SCOPE_REFERRAL_MESSAGE,
+                    status="OK",
+                    label=LABEL_CLINICAL,
+                    stage_decided="STAGE_2",
+                    latency_ms=latency_ms,
+                    error_type=None,
+                )
+            )
+
+        return self._emit_decision_log(
+            SafetyResult(
+                triggered=False,
+                category=CATEGORY_STANDARD,
+                rule_triggered=RULE_NONE,
+                response=None,
+                status="OK",
+                label=LABEL_NONE,
+                stage_decided="STAGE_2",
+                latency_ms=latency_ms,
+                error_type=None,
+            )
+        )
 
     def screen_output(self, reply: str) -> SafetyResult:
         """Screen LLM output before returning to user; replace unsafe clinical advice with FR4 referral (AC-FR4.5)."""
         if not isinstance(reply, str):
             reply = str(reply)
         stripped = reply.strip()
-        if stripped in (OUT_OF_SCOPE_REFERRAL_MESSAGE.strip(), CRISIS_RESPONSE_MESSAGE.strip()):
+        if stripped in (
+            OUT_OF_SCOPE_REFERRAL_MESSAGE.strip(),
+            CRISIS_RESPONSE_MESSAGE.strip(),
+            SAFE_FALLBACK_MESSAGE.strip(),
+        ):
             return _SAFE_RESULT
 
         for pattern in _UNSAFE_OUTPUT_PATTERNS:

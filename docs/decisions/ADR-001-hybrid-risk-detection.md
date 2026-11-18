@@ -89,7 +89,7 @@ We adopt **Option B: Hybrid Rules Plus Model-Based Risk Check**.
 flowchart TD
     A["Incoming User Message"] --> B["Stage 1: Deterministic Regex Rules (src/safety.py)"]
     B -- "Stage 1 CRISIS Match" --> C["Return Fixed CRISIS_RESPONSE_MESSAGE (Skips Stage 2)"]
-    B -- "Stage 1 CLINICAL Match or Unflagged" --> D["Stage 2: LLM Risk Classifier (Model = LLM_MODEL, temp = 0)"]
+    B -- "Stage 1 CLINICAL Match or Unflagged" --> D["Stage 2: LLM Risk Classifier (Model = CLASSIFIER_MODEL, temp = 0)"]
     D -- "Stage 2 returns CRISIS" --> E["Return Fixed CRISIS_RESPONSE_MESSAGE (Crisis Precedence)"]
     D -- "Stage 2 returns CLINICAL" --> F["Return Fixed OUT_OF_SCOPE_REFERRAL_MESSAGE"]
     D -- "Stage 2 returns NONE + Stage 1 was CLINICAL" --> F
@@ -106,8 +106,8 @@ flowchart TD
 
 2. **Stage 2 — Constrained LLM Risk Classification:**
    - Messages not intercepted as crisis in Stage 1 are passed to a separate LLM classification call prior to any check-in generation.
-   - **Model Source:** The classifier uses the model configured via `LLM_MODEL` (no hardcoded model names).
-   - **Parameters:** `temperature = 0` (`0.0`) and a fixed classification prompt.
+   - **Model & Provider Source:** The classifier provider is configured via `CLASSIFIER_PROVIDER` (`mock` by default, or `gemini`), using the model configured via `CLASSIFIER_MODEL` (no hardcoded model names; never a `-latest` alias) and the API key from `LLM_API_KEY`.
+   - **Parameters:** `temperature = 0` (`0.0`), explicit `thinkingConfig.thinkingLevel = "minimal"` (matching the default thinking level for Flash-Lite models per https://ai.google.dev/gemini-api/docs/thinking), a configurable 10 s timeout (`CLASSIFIER_TIMEOUT`), retry on HTTP 429 and 5xx (at most 3 attempts with exponential backoff), and a fixed classification prompt.
    - **Strict Output Contract:** The call must return strict JSON containing **exclusively one label** from:
      - `"CRISIS"` — self-harm, suicidal ideation (active or passive), farewells, bridge/method behaviors, third-person crisis with a plan, harm to others.
      - `"CLINICAL"` — requests for medical/psychiatric diagnosis, symptom differentials, medication dosing/missed doses, supplements, treatment selection, or drug interactions.
@@ -168,7 +168,8 @@ flowchart TD
 - Designed to use synthetic data only. Real users' health data would require a data processing agreement and a GDPR Art. 35 DPIA; a clinical product would face medical device and EU AI Act high-risk assessments.
 
 ### Operational decisions
-- Classifier model pinned to `gemini-3.5-flash-lite` (never a `-latest` alias) for reproducibility.
+- Classifier model pinned to `gemini-3.5-flash-lite` via `CLASSIFIER_MODEL` (never a `-latest` alias) with `CLASSIFIER_PROVIDER` (`mock` default | `gemini`) for reproducibility.
+- Thinking level explicitly set to `"minimal"` (`generationConfig.thinkingConfig.thinkingLevel = "minimal"`), which is the documented default thinking level for Flash-Lite models (`gemini-3.5-flash-lite` / `gemini-3.1-flash-lite`) in the Gemini API Thinking guide (https://ai.google.dev/gemini-api/docs/thinking).
 - API key only in local `.env` (gitignored); CI uses a mock classifier and never needs the key.
 - Holdout messages are sent only to the API, never to an agent. The private reserve is never shown to any chat or agent and is sent to the API once, at final validation.
 

@@ -259,3 +259,234 @@ def test_output_screening_blocks_unsafe_llm_replies():
         assert result.category == CATEGORY_STANDARD
         assert result.rule_triggered == RULE_NONE
         assert result.response is None
+
+
+def test_stage1_crisis_skips_stage2_classifier():
+    """Stage 1 CRISIS -> Stage 2 is not called (assert on the mock)."""
+    from unittest.mock import MagicMock
+    from src.classifier import BaseRiskClassifier
+
+    mock_classifier = MagicMock(spec=BaseRiskClassifier)
+    safety = SafetyLayer(classifier=mock_classifier)
+
+    result = safety.screen_input("Quero morrer, já não aguento mais.")
+
+    assert result.triggered is True
+    assert result.category == CATEGORY_CRISIS
+    assert result.rule_triggered == RULE_CRISIS_HARM
+    assert result.status == "OK"
+    assert result.stage_decided == "STAGE_1"
+    mock_classifier.classify.assert_not_called()
+
+
+def test_stage1_clinical_plus_stage2_crisis_resolves_to_crisis():
+    """Stage 1 CLINICAL + Stage 2 CRISIS -> CRISIS (CRISIS > CLINICAL > NONE)."""
+    from unittest.mock import MagicMock
+    from src.classifier import BaseRiskClassifier, LABEL_CRISIS
+    from src.safety import CRISIS_RESPONSE_MESSAGE
+
+    mock_classifier = MagicMock(spec=BaseRiskClassifier)
+    mock_classifier.classify.return_value = LABEL_CRISIS
+    safety = SafetyLayer(classifier=mock_classifier)
+
+    # Matches Stage 1 CLINICAL pattern ("Devo tomar sertralina") while containing indirect crisis farewell for Stage 2
+    result = safety.screen_input("Devo tomar sertralina? Acho q hoje é o último check-in q faço.")
+
+    mock_classifier.classify.assert_called_once()
+    assert result.triggered is True
+    assert result.category == CATEGORY_CRISIS
+    assert result.status == "OK"
+    assert result.label == LABEL_CRISIS
+    assert result.stage_decided == "STAGE_2"
+    assert result.response == CRISIS_RESPONSE_MESSAGE
+
+
+def test_stage1_none_plus_stage2_clinical_resolves_to_clinical():
+    """Stage 1 NONE + Stage 2 CLINICAL -> CLINICAL."""
+    from unittest.mock import MagicMock
+    from src.classifier import BaseRiskClassifier, LABEL_CLINICAL
+
+    mock_classifier = MagicMock(spec=BaseRiskClassifier)
+    mock_classifier.classify.return_value = LABEL_CLINICAL
+    safety = SafetyLayer(classifier=mock_classifier)
+
+    # Nuanced clinical question not matching Stage 1 regex
+    result = safety.screen_input("esqueci-me da sertralina ontem, tomo 2 hj p compensar?")
+
+    mock_classifier.classify.assert_called_once()
+    assert result.triggered is True
+    assert result.category == CATEGORY_OUT_OF_SCOPE
+    assert result.status == "OK"
+    assert result.label == LABEL_CLINICAL
+    assert result.stage_decided == "STAGE_2"
+    assert result.response == OUT_OF_SCOPE_REFERRAL_MESSAGE
+
+
+def test_stage2_failure_modes_produce_system_error_and_safe_fallback():
+    """Each Stage 2 failure mode -> status ERROR, category SYSTEM_ERROR, fallback with 112, SNS 24, SOS Voz Amiga."""
+    from unittest.mock import MagicMock, patch
+    import httpx
+    from src.classifier import GeminiRiskClassifier, MockRiskClassifier
+    from src.safety import CATEGORY_SYSTEM_ERROR, RULE_CLASSIFIER_FAIL_SAFE
+
+    # 1. Timeout
+    clf_timeout = GeminiRiskClassifier(api_key="fake-key", model_name="gemini-3.5-flash-lite")
+    with patch("httpx.post", side_effect=httpx.ReadTimeout("timeout")):
+        res_timeout = SafetyLayer(classifier=clf_timeout).screen_input("Olá, como estás?")
+
+    # 2. HTTP error after retries (e.g. 503 three times)
+    resp_503 = MagicMock(spec=httpx.Response)
+    resp_503.status_code = 503
+    clf_http = GeminiRiskClassifier(api_key="fake-key", model_name="gemini-3.5-flash-lite", backoff_base=0.0)
+    with patch("httpx.post", return_value=resp_503) as mock_post:
+        res_http = SafetyLayer(classifier=clf_http).screen_input("Olá, como estás?")
+        assert mock_post.call_count == 3
+
+    # 3. Invalid JSON
+    resp_bad_json = MagicMock(spec=httpx.Response)
+    resp_bad_json.status_code = 200
+    resp_bad_json.json.return_value = {"candidates": [{"content": {"parts": [{"text": "{not-json"}]}}]}
+    clf_bad_json = GeminiRiskClassifier(api_key="fake-key", model_name="gemini-3.5-flash-lite")
+    with patch("httpx.post", return_value=resp_bad_json):
+        res_bad_json = SafetyLayer(classifier=clf_bad_json).screen_input("Olá, como estás?")
+
+    # 4. Label outside the enum (both from Gemini JSON and from direct classifier return)
+    resp_bad_enum = MagicMock(spec=httpx.Response)
+    resp_bad_enum.status_code = 200
+    resp_bad_enum.json.return_value = {"candidates": [{"content": {"parts": [{"text": '{"label": "MAYBE"}'}]}}]}
+    clf_bad_enum = GeminiRiskClassifier(api_key="fake-key", model_name="gemini-3.5-flash-lite")
+    with patch("httpx.post", return_value=resp_bad_enum):
+        res_bad_enum = SafetyLayer(classifier=clf_bad_enum).screen_input("Olá, como estás?")
+
+    res_mock_bad_enum = SafetyLayer(classifier=MockRiskClassifier(default_label="OUTSIDE_ENUM")).screen_input(
+        "Olá, como estás?"
+    )
+
+    # 5. Missing key when provider is gemini
+    clf_no_key = GeminiRiskClassifier(api_key=None, model_name="gemini-3.5-flash-lite")
+    res_no_key = SafetyLayer(classifier=clf_no_key).screen_input("Olá, como estás?")
+
+    # 6. Missing model when provider is gemini
+    clf_no_model = GeminiRiskClassifier(api_key="fake-key", model_name=None)
+    res_no_model = SafetyLayer(classifier=clf_no_model).screen_input("Olá, como estás?")
+
+    for res in [
+        res_timeout,
+        res_http,
+        res_bad_json,
+        res_bad_enum,
+        res_mock_bad_enum,
+        res_no_key,
+        res_no_model,
+    ]:
+        assert res.triggered is True
+        assert res.status == "ERROR"
+        assert res.category == CATEGORY_SYSTEM_ERROR
+        assert res.rule_triggered == RULE_CLASSIFIER_FAIL_SAFE
+        assert res.stage_decided == "STAGE_2"
+        assert res.error_type is not None
+        assert res.response is not None
+        assert "112" in res.response
+        assert "SNS 24" in res.response
+        assert "808 24 24 24" in res.response
+        assert "SOS Voz Amiga" in res.response
+        assert "213 544 545" in res.response
+        assert res.response.find("112") < res.response.find("808 24 24 24") < res.response.find("213 544 545")
+
+
+def test_no_raw_message_text_appears_in_any_log_output(caplog, capsys):
+    """Privacy: Never log raw message text. Log only label, stage that decided, latency, and error type."""
+    import logging
+    from src.classifier import ClassifierError, LABEL_CLINICAL, LABEL_CRISIS, LABEL_NONE, MockRiskClassifier
+
+    secret_crisis_s1 = "SECRET_STAGE1_CRISIS_MSG_9001 Quero morrer hoje"
+    secret_crisis_s2 = "SECRET_STAGE2_CRISIS_MSG_9002 acho q hoje é o último check-in"
+    secret_clinical_s2 = "SECRET_STAGE2_CLINICAL_MSG_9003 tomo 2 sertralinas?"
+    secret_benign = "SECRET_BENIGN_MSG_9004 tive um dia normal"
+    secret_error = "SECRET_ERROR_MSG_9005 falha no classificador"
+
+    caplog.set_level(logging.DEBUG)
+
+    # 1. Stage 1 CRISIS
+    SafetyLayer(classifier=MockRiskClassifier()).screen_input(secret_crisis_s1)
+    # 2. Stage 2 CRISIS
+    SafetyLayer(classifier=MockRiskClassifier(default_label=LABEL_CRISIS)).screen_input(secret_crisis_s2)
+    # 3. Stage 2 CLINICAL
+    SafetyLayer(classifier=MockRiskClassifier(default_label=LABEL_CLINICAL)).screen_input(secret_clinical_s2)
+    # 4. Stage 2 NONE
+    SafetyLayer(classifier=MockRiskClassifier(default_label=LABEL_NONE)).screen_input(secret_benign)
+    # 5. Stage 2 Error
+    SafetyLayer(
+        classifier=MockRiskClassifier(responses=[ClassifierError("boom", error_type="TimeoutError")])
+    ).screen_input(secret_error)
+
+    log_text = caplog.text
+    captured = capsys.readouterr()
+    combined_output = f"{log_text}\n{captured.out}\n{captured.err}"
+
+    for secret in [
+        "SECRET_STAGE1_CRISIS_MSG_9001",
+        "SECRET_STAGE2_CRISIS_MSG_9002",
+        "SECRET_STAGE2_CLINICAL_MSG_9003",
+        "SECRET_BENIGN_MSG_9004",
+        "SECRET_ERROR_MSG_9005",
+    ]:
+        assert secret not in combined_output
+
+    assert "label=" in log_text
+    assert "stage=" in log_text
+    assert "latency_ms=" in log_text
+    assert "error_type=" in log_text
+
+
+def test_429_then_success_and_429_three_times_produces_system_error():
+    """429 then success -> retried and succeeds; 429 three times -> SYSTEM_ERROR via SafetyLayer."""
+    from unittest.mock import MagicMock, patch
+    import httpx
+    from src.classifier import GeminiRiskClassifier
+    from src.safety import CATEGORY_SYSTEM_ERROR, CRISIS_RESPONSE_MESSAGE, RULE_CLASSIFIER_FAIL_SAFE
+
+    resp_429 = MagicMock(spec=httpx.Response)
+    resp_429.status_code = 429
+
+    resp_200_crisis = MagicMock(spec=httpx.Response)
+    resp_200_crisis.status_code = 200
+    resp_200_crisis.json.return_value = {
+        "candidates": [{"content": {"parts": [{"text": '{"label": "CRISIS"}'}]}}]
+    }
+
+    # Case 1: 429 then success -> retried and succeeds
+    clf_retry_ok = GeminiRiskClassifier(
+        api_key="fake-key",
+        model_name="gemini-3.5-flash-lite",
+        backoff_base=0.1,
+    )
+    with patch("httpx.post", side_effect=[resp_429, resp_200_crisis]) as mock_post_ok, patch("time.sleep") as mock_sleep_ok:
+        res_ok = SafetyLayer(classifier=clf_retry_ok).screen_input("acho q hoje é o último check-in q faço")
+
+    assert mock_post_ok.call_count == 2
+    assert mock_sleep_ok.call_count == 1
+    assert res_ok.status == "OK"
+    assert res_ok.category == CATEGORY_CRISIS
+    assert res_ok.response == CRISIS_RESPONSE_MESSAGE
+
+    # Case 2: 429 three times -> SYSTEM_ERROR and fallback with crisis resources
+    clf_retry_fail = GeminiRiskClassifier(
+        api_key="fake-key",
+        model_name="gemini-3.5-flash-lite",
+        backoff_base=0.1,
+    )
+    with patch("httpx.post", side_effect=[resp_429, resp_429, resp_429]) as mock_post_fail, patch("time.sleep") as mock_sleep_fail:
+        res_fail = SafetyLayer(classifier=clf_retry_fail).screen_input("acho q hoje é o último check-in q faço")
+
+    assert mock_post_fail.call_count == 3
+    assert mock_sleep_fail.call_count == 2
+    assert res_fail.triggered is True
+    assert res_fail.status == "ERROR"
+    assert res_fail.category == CATEGORY_SYSTEM_ERROR
+    assert res_fail.rule_triggered == RULE_CLASSIFIER_FAIL_SAFE
+    assert res_fail.error_type == "HTTP_429"
+    assert res_fail.response is not None
+    assert "112" in res_fail.response
+    assert "SNS 24" in res_fail.response
+    assert "SOS Voz Amiga" in res_fail.response
