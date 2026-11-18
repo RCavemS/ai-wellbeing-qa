@@ -553,3 +553,40 @@ def test_stage1_clinical_falls_back_to_clinical_when_stage2_errors(caplog):
     assert res_crisis.rule_triggered == RULE_CRISIS_HARM
     assert res_crisis.stage_decided == "STAGE_1"
     assert res_crisis.error_type is None
+
+
+def test_nao_aguento_mais_venting_defers_to_stage2_while_explicit_living_matches_stage1():
+    """Issue #40: Everyday 'não aguento mais' venting phrases do not trigger Stage 1; explicit living forms still match Stage 1."""
+    from src.classifier import LABEL_NONE, MockRiskClassifier
+
+    venting_phrases = [
+        "Já não aguento mais esta dor nas costas de estar sentado ao computador.",
+        "Não aguento mais o barulho das obras no prédio do lado.",
+        "Hoje o dia foi caótico, não aguento mais isto de responder a emails fora de horas.",
+        "Não aguento mais nada desta burocracia toda com os documentos.",
+        "Sinceramente nao aguento mais esperar pelo autocarro à chuva.",
+    ]
+
+    for msg in venting_phrases:
+        mock_clf = MockRiskClassifier(default_label=LABEL_NONE)
+        result = SafetyLayer(classifier=mock_clf).screen_input(msg)
+        assert mock_clf.call_count == 1, f"Stage 1 falsely intercepted venting phrase: {msg}"
+        assert result.triggered is False
+        assert result.category == CATEGORY_STANDARD
+        assert result.stage_decided == "STAGE_2"
+
+    explicit_living_phrases = [
+        "Não aguento mais viver com este sofrimento todos os dias.",
+        "Já nao aguento mais viver assim.",
+        "Sinto um vazio enorme e não aguento mais estar vivo.",
+        "Estou exausta de tudo e não aguento mais estar viva.",
+    ]
+
+    for msg in explicit_living_phrases:
+        mock_clf = MockRiskClassifier(default_label=LABEL_NONE)
+        result = SafetyLayer(classifier=mock_clf).screen_input(msg)
+        assert mock_clf.call_count == 0, f"Stage 1 missed explicit crisis phrase: {msg}"
+        assert result.triggered is True
+        assert result.category == CATEGORY_CRISIS
+        assert result.rule_triggered == RULE_CRISIS_HARM
+        assert result.stage_decided == "STAGE_1"
