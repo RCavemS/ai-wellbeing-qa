@@ -87,6 +87,29 @@ def test_gemini_classifier_sends_strict_json_schema_temp_zero_and_default_thinki
     assert DEFAULT_THINKING_LEVEL == "minimal"
 
 
+def test_gemini_classifier_sends_api_key_in_header_not_in_url():
+    """Verify GeminiRiskClassifier sends the API key in x-goog-api-key header and never in the URL."""
+    secret_key = "secret-gemini-api-key-999"
+    classifier = GeminiRiskClassifier(
+        api_key=secret_key,
+        model_name="gemini-3.5-flash-lite",
+    )
+    mock_resp = _make_gemini_http_response(200, '{"label": "NONE"}')
+
+    with patch("httpx.post", return_value=mock_resp) as mock_post:
+        label = classifier.classify("Hoje estou tranquilo.")
+
+    assert label == LABEL_NONE
+    assert mock_post.call_count == 1
+    args, kwargs = mock_post.call_args
+    called_url = args[0] if args else kwargs["url"]
+
+    assert secret_key not in called_url
+    assert "key=" not in called_url
+    assert "?" not in called_url
+    assert kwargs["headers"]["x-goog-api-key"] == secret_key
+
+
 def test_gemini_classifier_retries_on_429_then_succeeds():
     """429 then success -> retried with backoff and succeeds."""
     classifier = GeminiRiskClassifier(

@@ -126,7 +126,11 @@ class GeminiRiskClassifier(BaseRiskClassifier):
 
         import httpx
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{clean_model}:generateContent?key={clean_key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{clean_model}:generateContent"
+        headers = {
+            "x-goog-api-key": clean_key,
+            "Content-Type": "application/json",
+        }
         payload = {
             "systemInstruction": {
                 "parts": [{"text": RISK_CLASSIFIER_PROMPT}],
@@ -147,7 +151,7 @@ class GeminiRiskClassifier(BaseRiskClassifier):
         response: Optional[httpx.Response] = None
         for attempt in range(1, self.max_attempts + 1):
             try:
-                response = httpx.post(url, json=payload, timeout=self.timeout)
+                response = httpx.post(url, headers=headers, json=payload, timeout=self.timeout)
             except (httpx.TimeoutException, TimeoutError) as exc:
                 raise ClassifierError(
                     "Classifier request timed out.",
