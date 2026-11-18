@@ -58,7 +58,7 @@ class Config:
             else classifier_model  # type: ignore[assignment]
         )
         self.classifier_timeout: float = (
-            _parse_float_env("CLASSIFIER_TIMEOUT", 10.0)
+            _parse_float_env("CLASSIFIER_TIMEOUT", 30.0)
             if classifier_timeout is _UNSET
             else float(classifier_timeout)  # type: ignore[arg-type]
         )
