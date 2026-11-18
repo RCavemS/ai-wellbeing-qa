@@ -351,6 +351,20 @@ class SafetyLayer:
         except Exception as exc:
             error_type = exc.error_type if isinstance(exc, ClassifierError) else type(exc).__name__
             latency_ms = round((time.perf_counter() - start_time) * 1000.0, 3)
+            if stage1_clinical:
+                return self._emit_decision_log(
+                    SafetyResult(
+                        triggered=True,
+                        category=CATEGORY_OUT_OF_SCOPE,
+                        rule_triggered=RULE_CLINICAL_ADVICE,
+                        response=OUT_OF_SCOPE_REFERRAL_MESSAGE,
+                        status="OK",
+                        label=LABEL_CLINICAL,
+                        stage_decided="STAGE_1",
+                        latency_ms=latency_ms,
+                        error_type=error_type,
+                    )
+                )
             return self._emit_decision_log(
                 SafetyResult(
                     triggered=True,
