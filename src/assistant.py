@@ -78,7 +78,7 @@ class WellbeingAssistant:
         # 3. Output screening guardrail (AC-FR4.5)
         output_safety = self.safety_layer.screen_output(reply)
         if output_safety.triggered:
-            self._log_safety_trigger(output_safety, model_version=self.config.model_name, start_time=start_time)
+            self._log_safety_trigger(output_safety, model_version=str(self.config.model_name or "NONE"), start_time=start_time)
             return output_safety.response or ""
 
         return reply

@@ -22,3 +22,13 @@ def test_get_llm_client_factory():
     config = Config(provider="mock")
     client = get_llm_client(config)
     assert isinstance(client, MockLLMClient)
+
+
+def test_gemini_client_requires_configured_model_name():
+    """Verify Gemini client raises ValueError if model name is not configured."""
+    import pytest
+    from src.llm import GeminiLLMClient
+
+    client = GeminiLLMClient(api_key="fake-key", model_name=None)
+    with pytest.raises(ValueError, match="Model name must be configured"):
+        client.generate("Hello")

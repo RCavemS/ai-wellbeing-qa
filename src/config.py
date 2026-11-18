@@ -14,7 +14,7 @@ class Config:
     """Application configuration with environment variable defaults."""
 
     provider: str = "mock"
-    model_name: str = "gemini-1.5-flash"
+    model_name: Optional[str] = None
     temperature: float = 0.7
     api_key: Optional[str] = None
 
@@ -25,7 +25,7 @@ class Config:
             self.provider = env_provider
 
         env_model = os.getenv("GEMINI_MODEL") or os.getenv("LLM_MODEL")
-        if env_model and self.model_name == "gemini-1.5-flash":
+        if env_model and self.model_name is None:
             self.model_name = env_model
 
         env_temp = os.getenv("LLM_TEMPERATURE")
