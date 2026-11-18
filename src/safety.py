@@ -182,7 +182,7 @@ _CRISIS_PATTERNS = [
     re.compile(r"\btake\s+my\s+(own\s+)?life\b", re.IGNORECASE),
     re.compile(r"\bend\s+(my\s+life|it\s+all)\b", re.IGNORECASE),
     # Indirect crisis phrasing (PT-PT & EN)
-    re.compile(r"\bn[ãa]o\s+aguento\s+mais(\s+viver|\s+isto|\s+nada)?\b", re.IGNORECASE),
+    re.compile(r"\bn[ãa]o\s+aguento\s+mais\s+(viver|estar\s+viv[oa])\b", re.IGNORECASE),
     re.compile(
         r"\b(sou\s+um\s+fardo|sinto\s+que\s+sou\s+um\s+fardo|estariam\s+melhor\s+sem\s+mim|estavam\s+melhor\s+sem\s+mim)\b",
         re.IGNORECASE,
