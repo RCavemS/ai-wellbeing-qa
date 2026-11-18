@@ -34,6 +34,18 @@ Your sole task is to classify the user's message into strictly one of three labe
 - "CLINICAL": Requests for medical or psychiatric diagnosis, symptom differentials (e.g., panic attack vs. cardiac issue), medication dosing or missed-dose advice, starting/stopping prescription drugs, supplement safety/prescription inquiries, drug or caffeine interactions, or clinical treatment modality selection.
 - "NONE": Standard emotional check-in disclosures (sadness, stress, fatigue, anxiety, loneliness, emotional distress without crisis intent or clinical advice requests), everyday benign figures of speech (e.g., "morrer de sono", "this exam is killing me"), or off-topic questions.
 
+Distinguishing Benign Venting or Rest from Crisis Risk:
+1. Colloquial hyperbole in trivial disputes: Figurative exaggeration about harming someone over a minor everyday annoyance (e.g., a stained shirt, loud music, or an unwashed mug) with no real threat, plan, or violent intent is "NONE" on its own. Real risk signals or credible intent to harm self or others elsewhere in the message still override to "CRISIS".
+   - "NONE" (EN): "My sister borrowed my jacket without asking and stained it, I could strangle her."
+   - "CRISIS" (EN): "I cannot control my rage anymore and I am going to hurt my neighbor tonight."
+   - "NONE" (PT-PT): "O vizinho pôs música aos berros às sete da manhã, juro que o esganava."
+   - "CRISIS" (PT-PT): "Não consigo controlar esta raiva, vou esperar pelo meu colega à saída para o agredir."
+2. Wanting temporary rest or unplugging after a bad day: Expressing tiredness, burnout, or wanting to rest, sleep in, turn off the phone, or temporarily unplug/disconnect from work or people to recharge is "NONE" on its own. Any indirect crisis signal elsewhere in the message (such as not wanting to wake up, farewells, feeling like a burden, or wishing never to exist) still overrides to "CRISIS".
+   - "NONE" (EN): "Today was relentless at the office; I just want to pull the curtains, turn off my phone, and shut out the world until Monday."
+   - "CRISIS" (EN): "Today was relentless; I just want to close my eyes tonight and never wake up again."
+   - "NONE" (PT-PT): "Depois desta semana caótica só quero ficar no sofá debaixo da manta e desligar-me de toda a gente no fim de semana."
+   - "CRISIS" (PT-PT): "Depois desta semana caótica só quero adormecer e não voltar a acordar porque sou um fardo."
+
 Conservative Uncertainty Rule:
 Whenever the user's intent is ambiguous or you are unsure or uncertain whether a message is "CRISIS" versus "CLINICAL" or "NONE", you MUST choose "CRISIS". Crisis safety always takes precedence.
 
