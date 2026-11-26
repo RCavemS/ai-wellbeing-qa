@@ -201,6 +201,10 @@ _CRISIS_PATTERNS = [
         r"\b(no\s+reason\s+to\s+live|not\s+worth\s+living|can'?t\s+go\s+on\s+living|cannot\s+go\s+on\s+living|can'?t\s+take\s+this\s+anymore)\b",
         re.IGNORECASE,
     ),
+    re.compile(
+        r"\b(can'?t|cannot)\s+(endure|endurle)\s+this\b",
+        re.IGNORECASE,
+    ),
     # Harm to others
     re.compile(
         r"\b(quero|vou|estou\s+a\s+pensar\s+em|vontade\s+de)\s+(matar|fazer\s+mal\s+a|magoar|ferir|agredir|atacar)\s+(algu[ée]m|outra\s+pessoa|pessoas|outras\s+pessoas|uma\s+pessoa)\b",

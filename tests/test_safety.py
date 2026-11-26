@@ -44,6 +44,7 @@ CRISIS_SCENARIOS = [
     "estou a pensar em suicido",
     "vou matarme hoje",
     "i wanna kil myself",
+    "I can't endurle this",
     # Mixed language (PT-PT + EN code-switching)
     "Feeling so low today, quero desaparecer para sempre.",
     "Sinto-me sem saída, I don't want to wake up.",
