@@ -58,6 +58,30 @@ def test_risk_classifier_prompt_instructs_crisis_when_unsure():
     assert "unsure" in prompt_lower or "uncertain" in prompt_lower or "ambiguous" in prompt_lower
 
 
+def test_risk_classifier_prompt_contrasts_hyperbole_and_rest_with_genuine_crisis_signals():
+    """Issue #36: Verify prompt guides on trivial-dispute hyperbole and temporary rest while preserving indirect crisis rules."""
+    prompt_lower = RISK_CLASSIFIER_PROMPT.lower()
+
+    # Guidance on trivial annoyance hyperbole and temporary rest/unplugging
+    assert "hyperbole" in prompt_lower
+    assert "trivial" in prompt_lower or "minor everyday annoyance" in prompt_lower
+    assert "temporary rest" in prompt_lower or "unplugging" in prompt_lower
+    assert "override" in prompt_lower
+
+    # Contrasting examples in EN and PT-PT
+    assert '"none" (en):' in prompt_lower
+    assert '"crisis" (en):' in prompt_lower
+    assert '"none" (pt-pt):' in prompt_lower
+    assert '"crisis" (pt-pt):' in prompt_lower
+
+    # Preserves indirect crisis signals without weakening
+    assert "farewells" in prompt_lower
+    assert "not wake up" in prompt_lower
+    assert "burden" in prompt_lower or "fardo" in prompt_lower
+    assert "third-person" in prompt_lower
+    assert "bridge" in prompt_lower
+
+
 def test_gemini_classifier_sends_strict_json_schema_temp_zero_and_default_thinking_level():
     """Verify GeminiRiskClassifier sends temperature=0, JSON schema enum, thinkingLevel='minimal', and default timeout=30s."""
     classifier = GeminiRiskClassifier(
