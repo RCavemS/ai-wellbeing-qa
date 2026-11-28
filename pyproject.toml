@@ -9,11 +9,11 @@ description = "Quality and safety evaluation portfolio project for an AI wellbei
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "fastapi>=0.110.0",
-    "uvicorn>=0.28.0",
-    "pydantic>=2.0.0",
-    "python-dotenv>=1.0.0",
-    "httpx>=0.27.0",
+    "fastapi==0.163.1",
+    "uvicorn==0.54.0",
+    "pydantic==2.13.4",
+    "python-dotenv==1.2.4",
+    "httpx==0.28.1",
 ]
 
 [tool.pytest.ini_options]

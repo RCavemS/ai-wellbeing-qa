@@ -6,7 +6,8 @@ Instructions for any AI agent working in this repo.
 - What it is: Quality and safety evaluation portfolio project for an AI-powered wellbeing check-in assistant with a rule-based safety layer and simple API.
 - Stack: Python, FastAPI, pytest
 - Run tests: `pytest`
-- Run locally: `python -m src.assistant`
+- Run CLI locally: `python -m src.assistant`
+- Run API locally: `uvicorn src.api:app --host 127.0.0.1 --port 8000`
 
 ## Environment
 - OS: Windows. Shell: PowerShell.

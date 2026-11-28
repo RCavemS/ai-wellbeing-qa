@@ -2,10 +2,12 @@
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import json
 import logging
+from pathlib import Path
 import re
 import time
-from typing import Optional
+from typing import Optional, Union
 import uuid
 from src.classifier import (
     BaseRiskClassifier,
@@ -17,7 +19,7 @@ from src.classifier import (
     VALID_RISK_LABELS,
     get_risk_classifier,
 )
-from src.config import Config
+from src.config import Config, get_config
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +36,7 @@ RULE_CLINICAL_ADVICE = "RULE_CLINICAL_ADVICE"
 RULE_CLASSIFIER_CRISIS = "CLASSIFIER_CRISIS"
 RULE_CLASSIFIER_CLINICAL = "CLASSIFIER_CLINICAL"
 RULE_CLASSIFIER_FAIL_SAFE = "CLASSIFIER_FAIL_SAFE"
+RULE_LLM_FAIL_SAFE = "LLM_FAIL_SAFE"
 
 # Verified Portuguese crisis resources (verified by Rafael Soares / RCavemS on 15-11-2026)
 # Issue #4 comment: https://github.com/RCavemS/ai-wellbeing-qa/issues/4#issuecomment-6901923797
@@ -460,19 +463,24 @@ class SafetyLayer:
                     category=CATEGORY_OUT_OF_SCOPE,
                     rule_triggered=RULE_CLINICAL_ADVICE,
                     response=OUT_OF_SCOPE_REFERRAL_MESSAGE,
+                    label=LABEL_CLINICAL,
+                    stage_decided="STAGE_3",
                 )
 
         return _SAFE_RESULT
 
 
 class AuditLogger:
-    """Structured audit logger for safety triggers (FR5).
+    """Structured audit logger for safety triggers and check-in turns (FR5).
 
     Enforces AC-FR5.1 schema and AC-FR5.2 privacy rule (raw message text is never stored).
+    Persists records to a configurable JSONL sink in addition to in-memory entries.
     """
 
-    def __init__(self):
+    def __init__(self, log_path: Optional[Union[str, Path]] = None):
         self.entries: list[dict] = []
+        resolved_path = get_config().audit_log_path if log_path is None else log_path
+        self.log_path: Path = Path(resolved_path)
 
     def log(
         self,
@@ -480,8 +488,13 @@ class AuditLogger:
         status: str,
         category: str,
         rule_triggered: str,
-        model_version: str,
-        latency_ms: float,
+        stage_decided: str = "STAGE_2",
+        llm_model: str = "NONE",
+        classifier_model: str = "NONE",
+        classifier_latency_ms: float = 0.0,
+        latency_ms: float = 0.0,
+        classifier_fail_safe: bool = False,
+        error_type: Optional[str] = None,
     ) -> dict:
         entry = {
             "interaction_id": str(uuid.uuid4()),
@@ -489,8 +502,16 @@ class AuditLogger:
             "status": status,
             "category": category,
             "rule_triggered": rule_triggered,
-            "model_version": model_version,
+            "stage_decided": stage_decided,
+            "llm_model": llm_model,
+            "classifier_model": classifier_model,
+            "classifier_latency_ms": round(classifier_latency_ms, 3),
             "latency_ms": round(latency_ms, 3),
+            "classifier_fail_safe": bool(classifier_fail_safe),
+            "error_type": error_type,
         }
         self.entries.append(entry)
+        self.log_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
         return entry

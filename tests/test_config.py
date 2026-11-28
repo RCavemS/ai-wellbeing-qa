@@ -14,6 +14,7 @@ def test_config_default_values():
         assert config.classifier_provider == "mock"
         assert config.classifier_model is None
         assert config.classifier_timeout == 30.0
+        assert config.audit_log_path == "logs/audit.jsonl"
 
 
 def test_config_env_overrides():
@@ -26,6 +27,7 @@ def test_config_env_overrides():
         "CLASSIFIER_PROVIDER": "gemini",
         "CLASSIFIER_MODEL": "gemini-3.5-flash-lite",
         "CLASSIFIER_TIMEOUT": "15.5",
+        "AUDIT_LOG_PATH": "custom_logs/custom_audit.jsonl",
     }
     with patch.dict(os.environ, test_env, clear=True):
         config = Config()
@@ -36,6 +38,7 @@ def test_config_env_overrides():
         assert config.classifier_provider == "gemini"
         assert config.classifier_model == "gemini-3.5-flash-lite"
         assert config.classifier_timeout == 15.5
+        assert config.audit_log_path == "custom_logs/custom_audit.jsonl"
 
 
 def test_get_config_cached():
