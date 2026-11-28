@@ -13,7 +13,7 @@ def test_config_default_values():
         assert config.api_key is None
         assert config.classifier_provider == "mock"
         assert config.classifier_model is None
-        assert config.classifier_timeout == 10.0
+        assert config.classifier_timeout == 30.0
 
 
 def test_config_env_overrides():

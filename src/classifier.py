@@ -14,7 +14,7 @@ VALID_RISK_LABELS = (LABEL_CRISIS, LABEL_CLINICAL, LABEL_NONE)
 # Default thinking level for gemini-3.5-flash-lite / Flash-Lite models per
 # https://ai.google.dev/gemini-api/docs/thinking
 DEFAULT_THINKING_LEVEL = "minimal"
-DEFAULT_CLASSIFIER_TIMEOUT = 10.0
+DEFAULT_CLASSIFIER_TIMEOUT = 30.0
 DEFAULT_MAX_ATTEMPTS = 3
 
 CLASSIFIER_RESPONSE_SCHEMA = {
