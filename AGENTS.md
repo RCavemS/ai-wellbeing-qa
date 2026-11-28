@@ -29,5 +29,11 @@ If one matches, read that SKILL.md and follow it.
 ## PR metrics
 At the start of every task, record the time with Get-Date. At the end of every PR description, add a “Metrics” section with: start and end time and duration (measured, not estimated); files changed and lines +/- (from git diff --stat main); tests added and total passing; number of commands that failed and were retried. Never estimate or invent token usage, model name or quota.
 
+## Holdout evaluation hygiene
+- Holdout evaluation messages are private and must never be quoted in issues, PRs, comments, commit messages, tests, prompts or code.
+- Issues found by holdout evaluation describe the failure pattern in general terms (e.g. "misspelled indirect crisis phrasing"), with counts and stage, not the message text.
+- Test examples and prompt examples must be written from scratch.
+- Agents must never read the holdout folder or run evaluations against a real provider.
+
 ## Conventions
 - <add rules here whenever an agent makes the same mistake twice>
