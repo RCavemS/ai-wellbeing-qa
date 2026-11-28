@@ -1,8 +1,9 @@
 """Wellbeing Assistant service coordinating conversation flow and LLM interactions."""
 
+from dataclasses import dataclass
 import sys
 import time
-from typing import Optional
+from typing import Any, Optional
 from src.classifier import BaseRiskClassifier, validate_classifier_config
 from src.config import Config, get_config
 from src.llm import BaseLLMClient, get_llm_client
@@ -14,9 +15,24 @@ from src.prompts import (
 )
 from src.safety import (
     AuditLogger,
+    CATEGORY_CRISIS,
+    CATEGORY_STANDARD,
+    CATEGORY_SYSTEM_ERROR,
+    RULE_CLASSIFIER_FAIL_SAFE,
+    RULE_LLM_FAIL_SAFE,
+    RULE_NONE,
+    SAFE_FALLBACK_MESSAGE,
     SafetyLayer,
-    SafetyResult,
 )
+
+
+@dataclass(frozen=True)
+class AssistantTurnResult:
+    """Result of a single assistant interaction turn including reply and audit metadata."""
+
+    reply: str
+    metadata: dict[str, Any]
+    llm_error: bool = False
 
 
 class WellbeingAssistant:
@@ -37,7 +53,7 @@ class WellbeingAssistant:
             )
         self.llm_client = llm_client or get_llm_client(self.config)
         self.safety_layer = safety_layer or SafetyLayer(classifier=classifier, config=self.config)
-        self.audit_logger = audit_logger or AuditLogger()
+        self.audit_logger = audit_logger or AuditLogger(log_path=self.config.audit_log_path)
 
     def greet(self, language: str = "pt") -> str:
         """Initiate check-in flow with a supportive greeting (FR1.1)."""
@@ -46,19 +62,130 @@ class WellbeingAssistant:
             return DEFAULT_GREETING_EN
         return DEFAULT_GREETING_PT
 
-    def _log_safety_trigger(
+    def _resolve_llm_model(self, bypassed: bool) -> str:
+        if bypassed:
+            return "NONE"
+        if self.config.model_name and str(self.config.model_name).strip():
+            return str(self.config.model_name).strip()
+        if (self.config.provider or "mock").lower().strip() == "mock":
+            return "mock"
+        return "NONE"
+
+    def _resolve_classifier_model(self, bypassed: bool) -> str:
+        if bypassed:
+            return "NONE"
+        if self.config.classifier_model and str(self.config.classifier_model).strip():
+            return str(self.config.classifier_model).strip()
+        if (self.config.classifier_provider or "mock").lower().strip() == "mock":
+            return "mock"
+        return "NONE"
+
+    def respond_turn(
         self,
-        safety_result: SafetyResult,
-        model_version: str,
-        start_time: float,
-    ) -> None:
-        latency_ms = (time.perf_counter() - start_time) * 1000.0
-        self.audit_logger.log(
-            status=safety_result.status,
-            category=safety_result.category,
-            rule_triggered=safety_result.rule_triggered,
-            model_version=model_version,
-            latency_ms=latency_ms,
+        message: str,
+        session_history: Optional[list[dict]] = None,
+    ) -> AssistantTurnResult:
+        """Process user message through safety layer and LLM, returning reply and audit metadata (FR1–FR5)."""
+        start_time = time.perf_counter()
+
+        # 1. Input screening (FR3 Crisis Escalation & FR4 Out-of-Scope Clinical)
+        input_safety = self.safety_layer.screen_input(message)
+        stage2_bypassed = (
+            input_safety.stage_decided == "STAGE_1" and input_safety.category == CATEGORY_CRISIS
+        )
+        classifier_model_used = self._resolve_classifier_model(bypassed=stage2_bypassed)
+        clf_fail_safe_used = (
+            input_safety.rule_triggered == RULE_CLASSIFIER_FAIL_SAFE
+            or input_safety.error_type is not None
+        )
+
+        if input_safety.triggered:
+            total_latency_ms = (time.perf_counter() - start_time) * 1000.0
+            entry = self.audit_logger.log(
+                status=input_safety.status,
+                category=input_safety.category,
+                rule_triggered=input_safety.rule_triggered,
+                stage_decided=input_safety.stage_decided,
+                llm_model=self._resolve_llm_model(bypassed=True),
+                classifier_model=classifier_model_used,
+                classifier_latency_ms=input_safety.latency_ms,
+                latency_ms=total_latency_ms,
+                classifier_fail_safe=clf_fail_safe_used,
+                error_type=input_safety.error_type,
+            )
+            return AssistantTurnResult(
+                reply=input_safety.response or "",
+                metadata=entry,
+                llm_error=False,
+            )
+
+        # 2. LLM generation for standard check-in (FR1, FR2)
+        llm_model_used = self._resolve_llm_model(bypassed=False)
+        prompt = format_user_prompt(message=message, history=session_history)
+        try:
+            reply = self.llm_client.generate(
+                prompt=prompt,
+                system_prompt=SYSTEM_PROMPT,
+            )
+        except Exception as exc:
+            total_latency_ms = (time.perf_counter() - start_time) * 1000.0
+            entry = self.audit_logger.log(
+                status="ERROR",
+                category=CATEGORY_SYSTEM_ERROR,
+                rule_triggered=RULE_LLM_FAIL_SAFE,
+                stage_decided=input_safety.stage_decided,
+                llm_model=llm_model_used,
+                classifier_model=classifier_model_used,
+                classifier_latency_ms=input_safety.latency_ms,
+                latency_ms=total_latency_ms,
+                classifier_fail_safe=False,
+                error_type=type(exc).__name__,
+            )
+            return AssistantTurnResult(
+                reply=SAFE_FALLBACK_MESSAGE,
+                metadata=entry,
+                llm_error=True,
+            )
+
+        # 3. Output screening guardrail (AC-FR4.5)
+        output_safety = self.safety_layer.screen_output(reply)
+        total_latency_ms = (time.perf_counter() - start_time) * 1000.0
+        if output_safety.triggered:
+            entry = self.audit_logger.log(
+                status=output_safety.status,
+                category=output_safety.category,
+                rule_triggered=output_safety.rule_triggered,
+                stage_decided=output_safety.stage_decided,
+                llm_model=llm_model_used,
+                classifier_model=classifier_model_used,
+                classifier_latency_ms=input_safety.latency_ms,
+                latency_ms=total_latency_ms,
+                classifier_fail_safe=False,
+                error_type=None,
+            )
+            return AssistantTurnResult(
+                reply=output_safety.response or "",
+                metadata=entry,
+                llm_error=False,
+            )
+
+        # 4. Standard check-in audit record (AC-FR5.1)
+        entry = self.audit_logger.log(
+            status="OK",
+            category=CATEGORY_STANDARD,
+            rule_triggered=RULE_NONE,
+            stage_decided=input_safety.stage_decided,
+            llm_model=llm_model_used,
+            classifier_model=classifier_model_used,
+            classifier_latency_ms=input_safety.latency_ms,
+            latency_ms=total_latency_ms,
+            classifier_fail_safe=False,
+            error_type=None,
+        )
+        return AssistantTurnResult(
+            reply=reply,
+            metadata=entry,
+            llm_error=False,
         )
 
     def respond(
@@ -67,33 +194,7 @@ class WellbeingAssistant:
         session_history: Optional[list[dict]] = None,
     ) -> str:
         """Process user message through safety layer and LLM (FR1, FR2, FR3, FR4)."""
-        start_time = time.perf_counter()
-
-        # 1. Input screening (FR3 Crisis Escalation & FR4 Out-of-Scope Clinical)
-        input_safety = self.safety_layer.screen_input(message)
-        if input_safety.triggered:
-            model_ver = (
-                str(self.config.classifier_model or "NONE")
-                if input_safety.stage_decided == "STAGE_2"
-                else "NONE"
-            )
-            self._log_safety_trigger(input_safety, model_version=model_ver, start_time=start_time)
-            return input_safety.response or ""
-
-        # 2. LLM generation for standard check-in (FR1, FR2)
-        prompt = format_user_prompt(message=message, history=session_history)
-        reply = self.llm_client.generate(
-            prompt=prompt,
-            system_prompt=SYSTEM_PROMPT,
-        )
-
-        # 3. Output screening guardrail (AC-FR4.5)
-        output_safety = self.safety_layer.screen_output(reply)
-        if output_safety.triggered:
-            self._log_safety_trigger(output_safety, model_version=str(self.config.model_name or "NONE"), start_time=start_time)
-            return output_safety.response or ""
-
-        return reply
+        return self.respond_turn(message=message, session_history=session_history).reply
 
 
 def get_session_header(config: Config) -> str:

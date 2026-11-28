@@ -54,24 +54,33 @@ def test_assistant_default_mock_llm_execution():
 
 
 @pytest.mark.parametrize(
-    "message,expected_reply,expected_category,expected_rule",
+    "message,expected_reply,expected_category,expected_rule,expected_stage,expected_classifier_model",
     [
         (
             "Quero morrer, já não aguento mais viver assim.",
             CRISIS_RESPONSE_MESSAGE,
             CATEGORY_CRISIS,
             RULE_CRISIS_HARM,
+            "STAGE_1",
+            "NONE",
         ),
         (
             "Devo tomar sertralina para a ansiedade?",
             OUT_OF_SCOPE_REFERRAL_MESSAGE,
             CATEGORY_OUT_OF_SCOPE,
             RULE_CLINICAL_ADVICE,
+            "STAGE_1",
+            "mock",
         ),
     ],
 )
 def test_assistant_input_safety_triggers_bypass_llm_and_log(
-    message, expected_reply, expected_category, expected_rule
+    message,
+    expected_reply,
+    expected_category,
+    expected_rule,
+    expected_stage,
+    expected_classifier_model,
 ):
     """AC-FR3.1, AC-FR3.4, AC-FR4.4, AC-FR5.1, AC-FR5.2: Input safety triggers bypass LLM and log without raw text."""
     mock_llm = MagicMock(spec=BaseLLMClient)
@@ -88,7 +97,12 @@ def test_assistant_input_safety_triggers_bypass_llm_and_log(
     assert log_entry["status"] == "OK"
     assert log_entry["category"] == expected_category
     assert log_entry["rule_triggered"] == expected_rule
-    assert log_entry["model_version"] == "NONE"
+    assert log_entry["stage_decided"] == expected_stage
+    assert log_entry["llm_model"] == "NONE"
+    assert log_entry["classifier_model"] == expected_classifier_model
+    assert log_entry["classifier_fail_safe"] is False
+    assert isinstance(log_entry["classifier_latency_ms"], float)
+    assert isinstance(log_entry["latency_ms"], float)
     assert message not in json.dumps(log_entry)
 
 
@@ -124,7 +138,10 @@ def test_assistant_output_screening_blocks_unsafe_llm_reply_and_logs_trigger():
     assert log_entry["status"] == "OK"
     assert log_entry["category"] == CATEGORY_OUT_OF_SCOPE
     assert log_entry["rule_triggered"] == RULE_CLINICAL_ADVICE
-    assert log_entry["model_version"] == "test-model"
+    assert log_entry["stage_decided"] == "STAGE_3"
+    assert log_entry["llm_model"] == "test-model"
+    assert log_entry["classifier_model"] == "mock"
+    assert log_entry["classifier_fail_safe"] is False
     assert benign_msg not in json.dumps(log_entry)
 
 
@@ -216,17 +233,27 @@ def test_assistant_stage2_classifier_triggers_and_fail_safe_bypass_conversation_
     assert e1["status"] == "OK"
     assert e1["category"] == CATEGORY_CRISIS
     assert e1["rule_triggered"] == RULE_CLASSIFIER_CRISIS
-    assert e1["model_version"] == "gemini-3.5-flash-lite"
+    assert e1["stage_decided"] == "STAGE_2"
+    assert e1["llm_model"] == "NONE"
+    assert e1["classifier_model"] == "gemini-3.5-flash-lite"
+    assert e1["classifier_fail_safe"] is False
 
     assert e2["status"] == "OK"
     assert e2["category"] == CATEGORY_OUT_OF_SCOPE
     assert e2["rule_triggered"] == RULE_CLASSIFIER_CLINICAL
-    assert e2["model_version"] == "gemini-3.5-flash-lite"
+    assert e2["stage_decided"] == "STAGE_2"
+    assert e2["llm_model"] == "NONE"
+    assert e2["classifier_model"] == "gemini-3.5-flash-lite"
+    assert e2["classifier_fail_safe"] is False
 
     assert e3["status"] == "ERROR"
     assert e3["category"] == CATEGORY_SYSTEM_ERROR
     assert e3["rule_triggered"] == RULE_CLASSIFIER_FAIL_SAFE
-    assert e3["model_version"] == "gemini-3.5-flash-lite"
+    assert e3["stage_decided"] == "STAGE_2"
+    assert e3["llm_model"] == "NONE"
+    assert e3["classifier_model"] == "gemini-3.5-flash-lite"
+    assert e3["classifier_fail_safe"] is True
+    assert e3["error_type"] == "TimeoutError"
 
     serialized_logs = json.dumps(assistant.audit_logger.entries)
     assert "PRIVATE_MSG_A1" not in serialized_logs

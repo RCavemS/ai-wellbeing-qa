@@ -21,3 +21,6 @@ Thumbs.db
 # Independent holdout & AI augmented message evaluation datasets
 holdout_messages.txt
 ai_augmented_messages.txt
+
+# Audit log JSONL sink directory
+logs/

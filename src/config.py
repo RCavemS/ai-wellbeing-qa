@@ -32,6 +32,7 @@ class Config:
         classifier_provider: object = _UNSET,
         classifier_model: object = _UNSET,
         classifier_timeout: object = _UNSET,
+        audit_log_path: object = _UNSET,
     ):
         self.provider: str = (
             os.getenv("LLM_PROVIDER") or "mock" if provider is _UNSET else str(provider)
@@ -61,6 +62,11 @@ class Config:
             _parse_float_env("CLASSIFIER_TIMEOUT", 30.0)
             if classifier_timeout is _UNSET
             else float(classifier_timeout)  # type: ignore[arg-type]
+        )
+        self.audit_log_path: str = (
+            os.getenv("AUDIT_LOG_PATH") or "logs/audit.jsonl"
+            if audit_log_path is _UNSET
+            else str(audit_log_path)
         )
 
 
