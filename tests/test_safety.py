@@ -490,3 +490,66 @@ def test_429_then_success_and_429_three_times_produces_system_error():
     assert "112" in res_fail.response
     assert "SNS 24" in res_fail.response
     assert "SOS Voz Amiga" in res_fail.response
+
+
+def test_stage1_clinical_falls_back_to_clinical_when_stage2_errors(caplog):
+    """Issue #38: Stage 1 CLINICAL + Stage 2 error -> falls back to Stage 1 CLINICAL with error_type recorded."""
+    import logging
+    from src.classifier import ClassifierError, LABEL_CLINICAL, MockRiskClassifier
+    from src.safety import CATEGORY_SYSTEM_ERROR, RULE_CLASSIFIER_FAIL_SAFE, SAFE_FALLBACK_MESSAGE
+
+    caplog.set_level(logging.INFO)
+
+    # 1. Clinical message matching Stage 1 + failing Stage 2 classifier -> CLINICAL (STAGE_1) with error_type
+    failing_clf_1 = MockRiskClassifier(
+        responses=[ClassifierError("Classifier timed out", error_type="TimeoutError")]
+    )
+    res_clinical = SafetyLayer(classifier=failing_clf_1).screen_input(
+        "Podes diagnosticar-me com depressão clínica?"
+    )
+
+    assert failing_clf_1.call_count == 1
+    assert res_clinical.triggered is True
+    assert res_clinical.status == "OK"
+    assert res_clinical.category == CATEGORY_OUT_OF_SCOPE
+    assert res_clinical.rule_triggered == RULE_CLINICAL_ADVICE
+    assert res_clinical.label == LABEL_CLINICAL
+    assert res_clinical.stage_decided == "STAGE_1"
+    assert res_clinical.error_type == "TimeoutError"
+    assert res_clinical.response == OUT_OF_SCOPE_REFERRAL_MESSAGE
+    assert "safety_decision label=CLINICAL stage=STAGE_1" in caplog.text
+    assert "error_type=TimeoutError" in caplog.text
+
+    # 2. Non-clinical message + failing Stage 2 classifier -> SYSTEM_ERROR unchanged
+    failing_clf_2 = MockRiskClassifier(
+        responses=[ClassifierError("Classifier timed out", error_type="TimeoutError")]
+    )
+    res_non_clinical = SafetyLayer(classifier=failing_clf_2).screen_input(
+        "Hoje tive um dia comprido no escritório."
+    )
+
+    assert failing_clf_2.call_count == 1
+    assert res_non_clinical.triggered is True
+    assert res_non_clinical.status == "ERROR"
+    assert res_non_clinical.category == CATEGORY_SYSTEM_ERROR
+    assert res_non_clinical.rule_triggered == RULE_CLASSIFIER_FAIL_SAFE
+    assert res_non_clinical.label is None
+    assert res_non_clinical.stage_decided == "STAGE_2"
+    assert res_non_clinical.error_type == "TimeoutError"
+    assert res_non_clinical.response == SAFE_FALLBACK_MESSAGE
+
+    # 3. Crisis Stage 1 path unchanged (skips Stage 2 even if classifier would fail)
+    failing_clf_3 = MockRiskClassifier(
+        responses=[ClassifierError("Classifier timed out", error_type="TimeoutError")]
+    )
+    res_crisis = SafetyLayer(classifier=failing_clf_3).screen_input(
+        "Quero matar-me hoje."
+    )
+
+    assert failing_clf_3.call_count == 0
+    assert res_crisis.triggered is True
+    assert res_crisis.status == "OK"
+    assert res_crisis.category == CATEGORY_CRISIS
+    assert res_crisis.rule_triggered == RULE_CRISIS_HARM
+    assert res_crisis.stage_decided == "STAGE_1"
+    assert res_crisis.error_type is None
