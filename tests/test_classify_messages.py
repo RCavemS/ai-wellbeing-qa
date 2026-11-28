@@ -83,7 +83,7 @@ def test_refuses_without_yes(
 
     assert exc_info.value.code == 1
     captured = capsys.readouterr()
-    assert "Maximum number of API calls: 6 (2 messages × 3 repeats)" in captured.out
+    assert "Maximum number of API calls: 6 classifications (2 messages × 3 repeats), up to 18 HTTP requests (max_attempts=3)" in captured.out
     assert "Stopping: run with --yes to proceed." in captured.err
 
 
@@ -487,3 +487,76 @@ def test_stage1_clinical_fallback_on_stage2_error_counts_api_call_and_clinical_l
     assert "line 1 | expected: CLINICAL | run 1: CLINICAL (STAGE_1) | run 2: CLINICAL (STAGE_1) | agreed: True" in captured
     assert "Clinical detection: 1/1 (100.0%)" in captured
     assert "API calls made: 2" in captured
+
+
+def test_classify_messages_counts_real_http_requests_on_retry_and_zero_on_credential_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+):
+    """Issue #35: 429-then-200 sequence counts 2 HTTP requests; credential error counts 0 HTTP requests."""
+    from unittest.mock import MagicMock, patch
+    import httpx
+    from src.classifier import GeminiRiskClassifier
+
+    msg_file = tmp_path / "messages.txt"
+    msg_file.write_text("Hoje tive um dia tranquilo.\n", encoding="utf-8")
+    lbl_file = tmp_path / "labels.txt"
+    lbl_file.write_text("NONE\n", encoding="utf-8")
+    config = Config(classifier_provider="gemini")
+
+    # 1. 429-then-200 sequence on 1 classification (repeats=1) -> 2 HTTP requests
+    resp_429 = MagicMock(spec=httpx.Response)
+    resp_429.status_code = 429
+    resp_200 = MagicMock(spec=httpx.Response)
+    resp_200.status_code = 200
+    resp_200.json.return_value = {
+        "candidates": [{"content": {"parts": [{"text": '{"label": "NONE"}'}]}}]
+    }
+
+    gemini_clf = GeminiRiskClassifier(
+        api_key="fake-api-key",
+        model_name="gemini-3.5-flash-lite",
+        max_attempts=3,
+        backoff_base=0.0,
+    )
+
+    with patch("httpx.post", side_effect=[resp_429, resp_200]) as mock_post:
+        res_retry = run_classification(
+            messages_path=msg_file,
+            labels_path=lbl_file,
+            repeats=1,
+            delay=0,
+            yes=True,
+            classifier=gemini_clf,
+            config=config,
+        )
+
+    assert mock_post.call_count == 2
+    assert gemini_clf.request_count == 2
+    assert res_retry["api_calls_made"] == 2
+    captured_retry = capsys.readouterr().out
+    assert "Maximum number of API calls: 1 classifications (1 messages × 1 repeats), up to 3 HTTP requests (max_attempts=3)" in captured_retry
+    assert "API calls made: 2" in captured_retry
+
+    # 2. Credential error before any request -> 0 HTTP requests
+    gemini_bad_creds = GeminiRiskClassifier(
+        api_key="",
+        model_name="gemini-3.5-flash-lite",
+        max_attempts=3,
+    )
+
+    with patch("httpx.post") as mock_post_no_call:
+        res_cred_err = run_classification(
+            messages_path=msg_file,
+            labels_path=lbl_file,
+            repeats=1,
+            delay=0,
+            yes=True,
+            classifier=gemini_bad_creds,
+            config=config,
+        )
+
+    assert mock_post_no_call.call_count == 0
+    assert gemini_bad_creds.request_count == 0
+    assert res_cred_err["api_calls_made"] == 0
+    captured_cred_err = capsys.readouterr().out
+    assert "API calls made: 0" in captured_cred_err
